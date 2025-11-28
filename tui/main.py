@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+LOG_FILE = Path(__file__).parent / "wacli.log"
+
+def log(msg: str) -> None:
+    with open(LOG_FILE, "a") as f:
+        f.write(f"{datetime.now().isoformat()} {msg}\n")
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
@@ -98,10 +104,12 @@ class WaCLIApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        log("on_mount: start")
         self.title = "WhatsApp Messages"
         self.load_messages_from_db()
         self.render_messages()
-        asyncio.create_task(self.listen_socket())
+        log("on_mount: starting worker")
+        self.run_worker(self.listen_socket(), exclusive=True)
 
     def load_messages_from_db(self) -> None:
         if not DB_PATH.exists():
@@ -138,34 +146,33 @@ class WaCLIApp(App):
         message_list.scroll_end(animate=False)
 
     async def listen_socket(self) -> None:
+        log("listen_socket: connecting...")
+        reader, _ = await asyncio.open_unix_connection(SOCKET_PATH)
+        log("listen_socket: connected")
         while True:
-            try:
-                reader, _ = await asyncio.open_unix_connection(SOCKET_PATH)
-                while True:
-                    line = await reader.readline()
-                    if not line:
-                        break
-                    data = json.loads(line.decode())
-                    msg = Message(
-                        id=data.get("id", 0),
-                        timestamp=data["timestamp"],
-                        chat_jid=data["chat_jid"],
-                        chat_name=data["chat_name"],
-                        sender_jid=data["sender_jid"],
-                        sender_name=data["sender_name"],
-                        is_group=data["is_group"],
-                        is_muted=data["is_muted"],
-                        is_reply_to_me=data["is_reply_to_me"],
-                        text=data["text"],
-                    )
-                    self.messages.append(msg)
-                    message_list = self.query_one(MessageList)
-                    message_list.mount(MessageWidget(msg))
-                    self.call_after_refresh(self.scroll_to_bottom)
-            except (FileNotFoundError, ConnectionRefusedError):
-                await asyncio.sleep(2)
-            except Exception:
-                await asyncio.sleep(2)
+            line = await reader.readline()
+            log(f"listen_socket: got line: {line}")
+            if not line:
+                raise ConnectionError("Socket connection closed")
+            data = json.loads(line.decode())
+            msg = Message(
+                id=data.get("id", 0),
+                timestamp=data["timestamp"],
+                chat_jid=data["chat_jid"],
+                chat_name=data["chat_name"],
+                sender_jid=data["sender_jid"],
+                sender_name=data["sender_name"],
+                is_group=data["is_group"],
+                is_muted=data["is_muted"],
+                is_reply_to_me=data["is_reply_to_me"],
+                text=data["text"],
+            )
+            log(f"listen_socket: parsed message: {msg.text}")
+            self.messages.append(msg)
+            message_list = self.query_one(MessageList)
+            message_list.mount(MessageWidget(msg))
+            self.call_after_refresh(self.scroll_to_bottom)
+            log("listen_socket: widget mounted")
 
     def action_scroll_down(self) -> None:
         self.query_one(MessageList).scroll_relative(y=3)
