@@ -215,6 +215,21 @@ func (a *App) broadcastMessage(msg *Message) {
 	}
 }
 
+func (a *App) broadcastCall(call *Call) {
+	data, err := json.Marshal(call)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	a.connMu.RLock()
+	defer a.connMu.RUnlock()
+
+	for conn := range a.socketConns {
+		conn.Write(data)
+	}
+}
+
 func (a *App) loginWithQR() error {
 	qrChan, _ := a.client.GetQRChannel(a.ctx)
 	if err := a.client.Connect(); err != nil {
