@@ -47,21 +47,39 @@ class Message:
 
     @property
     def title(self) -> str:
-        prefix = "[Reply] " if self.is_reply_to_me else ""
+        prefix = "↩ " if self.is_reply_to_me else ""
         if self.is_group:
             return f"{prefix}{self.sender_name} @ {self.chat_name}"
         return f"{prefix}{self.sender_name}"
 
 
 class MessageWidget(Static):
-    def __init__(self, message: Message) -> None:
+    DEFAULT_CSS = """
+    MessageWidget {
+        height: 1;
+        overflow: hidden;
+    }
+    MessageWidget.selected {
+        background: $surface-lighten-1;
+    }
+    """
+
+    def __init__(self, message: Message, selected: bool = False) -> None:
         self.message = message
         super().__init__()
+        if selected:
+            self.add_class("selected")
 
-    def compose(self) -> ComposeResult:
+    def render(self) -> str:
         msg = self.message
-        content = f"[bold cyan]{msg.title}[/] [dim]{msg.formatted_time}[/]\n{msg.text}"
-        yield Static(content, markup=True)
+        indicator = ">" if self.has_class("selected") else " "
+        text_oneline = msg.text.replace("\n", " ")
+        max_text = 80
+        if len(text_oneline) > max_text:
+            text_preview = text_oneline[:max_text] + "..."
+        else:
+            text_preview = text_oneline
+        return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {msg.title}[/]: {text_preview}"
 
 
 class MessageList(ScrollableContainer):
@@ -74,29 +92,24 @@ class WaCLIApp(App):
         height: 100%;
         scrollbar-gutter: stable;
     }
-
-    MessageWidget {
-        padding: 0 1;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-2;
-    }
-
-    MessageWidget:focus {
-        background: $surface-lighten-1;
-    }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("j", "scroll_down", "Down", show=False),
-        Binding("k", "scroll_up", "Up", show=False),
-        Binding("g", "scroll_home", "Top", show=False),
-        Binding("G", "scroll_end", "Bottom", show=False),
+        Binding("j", "select_next", "Down", show=False),
+        Binding("k", "select_prev", "Up", show=False),
+        Binding("g", "select_first", "Top", show=False),
+        Binding("G", "select_last", "Bottom", show=False),
+        Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
+        Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
     ]
+
+    HALF_PAGE = 15
 
     def __init__(self) -> None:
         super().__init__()
         self.messages: list[Message] = []
+        self.selected_index: int = -1
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -137,13 +150,31 @@ class WaCLIApp(App):
     def render_messages(self) -> None:
         message_list = self.query_one(MessageList)
         message_list.remove_children()
-        for msg in self.messages:
-            message_list.mount(MessageWidget(msg))
-        self.call_after_refresh(self.scroll_to_bottom)
+        if self.messages:
+            self.selected_index = len(self.messages) - 1
+        for i, msg in enumerate(self.messages):
+            message_list.mount(MessageWidget(msg, selected=(i == self.selected_index)))
+        self.call_after_refresh(self.scroll_to_selected)
 
-    def scroll_to_bottom(self) -> None:
-        message_list = self.query_one(MessageList)
-        message_list.scroll_end(animate=False)
+    def scroll_to_selected(self) -> None:
+        widgets = self.query(MessageWidget)
+        if widgets and 0 <= self.selected_index < len(widgets):
+            widgets[self.selected_index].scroll_visible()
+
+    def update_selection(self, new_index: int) -> None:
+        if not self.messages:
+            return
+        new_index = max(0, min(new_index, len(self.messages) - 1))
+        if new_index == self.selected_index:
+            return
+        widgets = list(self.query(MessageWidget))
+        if 0 <= self.selected_index < len(widgets):
+            widgets[self.selected_index].remove_class("selected")
+            widgets[self.selected_index].refresh()
+        self.selected_index = new_index
+        widgets[self.selected_index].add_class("selected")
+        widgets[self.selected_index].refresh()
+        widgets[self.selected_index].scroll_visible()
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
@@ -170,21 +201,29 @@ class WaCLIApp(App):
             log(f"listen_socket: parsed message: {msg.text}")
             self.messages.append(msg)
             message_list = self.query_one(MessageList)
-            message_list.mount(MessageWidget(msg))
-            self.call_after_refresh(self.scroll_to_bottom)
+            was_at_end = self.selected_index == len(self.messages) - 2
+            message_list.mount(MessageWidget(msg, selected=was_at_end))
+            if was_at_end:
+                self.update_selection(len(self.messages) - 1)
             log("listen_socket: widget mounted")
 
-    def action_scroll_down(self) -> None:
-        self.query_one(MessageList).scroll_relative(y=3)
+    def action_select_next(self) -> None:
+        self.update_selection(self.selected_index + 1)
 
-    def action_scroll_up(self) -> None:
-        self.query_one(MessageList).scroll_relative(y=-3)
+    def action_select_prev(self) -> None:
+        self.update_selection(self.selected_index - 1)
 
-    def action_scroll_home(self) -> None:
-        self.query_one(MessageList).scroll_home()
+    def action_select_first(self) -> None:
+        self.update_selection(0)
 
-    def action_scroll_end(self) -> None:
-        self.query_one(MessageList).scroll_end()
+    def action_select_last(self) -> None:
+        self.update_selection(len(self.messages) - 1)
+
+    def action_half_page_down(self) -> None:
+        self.update_selection(self.selected_index + self.HALF_PAGE)
+
+    def action_half_page_up(self) -> None:
+        self.update_selection(self.selected_index - self.HALF_PAGE)
 
 
 def main() -> None:
