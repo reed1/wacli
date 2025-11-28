@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -296,11 +298,32 @@ func (a *App) handleMessage(msg *events.Message) {
 	a.broadcastMessage(message)
 }
 
+func buildInsertParams(msg *Message) (columns []string, placeholders []string, values []interface{}) {
+	v := reflect.ValueOf(*msg)
+	t := v.Type()
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "" || jsonTag == "id" {
+			continue
+		}
+		columns = append(columns, jsonTag)
+		placeholders = append(placeholders, "?")
+		values = append(values, v.Field(i).Interface())
+	}
+	return
+}
+
 func (a *App) saveMessage(msg *Message) error {
-	result, err := a.msgDB.Exec(`
-		INSERT INTO messages (timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, text)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, msg.Timestamp, msg.ChatJID, msg.ChatName, msg.SenderJID, msg.SenderName, msg.IsGroup, msg.IsMuted, msg.IsReplyToMe, msg.Text)
+	columns, placeholders, values := buildInsertParams(msg)
+	query := fmt.Sprintf(
+		"INSERT INTO messages (%s) VALUES (%s)",
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "),
+	)
+
+	result, err := a.msgDB.Exec(query, values...)
 	if err != nil {
 		return err
 	}
