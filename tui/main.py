@@ -15,7 +15,7 @@ def log(msg: str) -> None:
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header, Input, Static
 
 
 SOCKET_PATH = "/tmp/wacli.sock"
@@ -25,6 +25,7 @@ DB_PATH = Path(__file__).parent.parent / "cli" / "messages.db"
 @dataclass
 class Message:
     id: int
+    message_id: str
     timestamp: int
     chat_jid: str
     chat_name: str
@@ -110,6 +111,26 @@ class MessageList(ScrollableContainer):
     pass
 
 
+class ComposeInput(Input):
+    DEFAULT_CSS = """
+    ComposeInput {
+        dock: bottom;
+        display: none;
+        margin: 0 1;
+    }
+    ComposeInput.visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def action_cancel(self) -> None:
+        self.app.hide_compose()
+
+
 class WaCLIApp(App):
     CSS = """
     MessageList {
@@ -126,6 +147,8 @@ class WaCLIApp(App):
         Binding("G", "select_last", "Bottom", show=False),
         Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
         Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
+        Binding("enter", "compose_send", "Send", show=False),
+        Binding("r", "compose_reply", "Reply"),
     ]
 
     HALF_PAGE = 15
@@ -134,10 +157,13 @@ class WaCLIApp(App):
         super().__init__()
         self.entries: list[Entry] = []
         self.selected_index: int = -1
+        self.socket_writer: asyncio.StreamWriter | None = None
+        self.compose_mode: str | None = None  # "send" or "reply"
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield MessageList()
+        yield ComposeInput(placeholder="Type your message...")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -161,6 +187,7 @@ class WaCLIApp(App):
         for row in cursor.fetchall():
             messages.append(Message(
                 id=row["id"],
+                message_id=row["message_id"],
                 timestamp=row["timestamp"],
                 chat_jid=row["chat_jid"],
                 chat_name=row["chat_name"],
@@ -220,7 +247,8 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
-        reader, _ = await asyncio.open_unix_connection(SOCKET_PATH)
+        reader, writer = await asyncio.open_unix_connection(SOCKET_PATH)
+        self.socket_writer = writer
         log("listen_socket: connected")
         while True:
             line = await reader.readline()
@@ -245,6 +273,7 @@ class WaCLIApp(App):
             elif entry_type == "message":
                 entry = Message(
                     id=data.get("id", 0),
+                    message_id=data.get("message_id", ""),
                     timestamp=data["timestamp"],
                     chat_jid=data["chat_jid"],
                     chat_name=data["chat_name"],
@@ -283,6 +312,80 @@ class WaCLIApp(App):
 
     def action_half_page_up(self) -> None:
         self.update_selection(self.selected_index - self.HALF_PAGE)
+
+    def get_selected_entry(self) -> Entry | None:
+        if 0 <= self.selected_index < len(self.entries):
+            return self.entries[self.selected_index]
+        return None
+
+    def action_compose_send(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry:
+            return
+        if isinstance(entry, Call):
+            return
+        self.compose_mode = "send"
+        compose_input = self.query_one(ComposeInput)
+        compose_input.placeholder = f"Message to {entry.chat_name}..."
+        compose_input.add_class("visible")
+        compose_input.focus()
+
+    def action_compose_reply(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry:
+            return
+        if isinstance(entry, Call):
+            return
+        self.compose_mode = "reply"
+        compose_input = self.query_one(ComposeInput)
+        compose_input.placeholder = f"Reply to {entry.sender_name}..."
+        compose_input.add_class("visible")
+        compose_input.focus()
+
+    def hide_compose(self) -> None:
+        compose_input = self.query_one(ComposeInput)
+        compose_input.value = ""
+        compose_input.remove_class("visible")
+        self.compose_mode = None
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        if not text:
+            self.hide_compose()
+            return
+
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            self.hide_compose()
+            return
+
+        if not self.socket_writer:
+            self.notify("Not connected to socket", severity="error")
+            self.hide_compose()
+            return
+
+        if self.compose_mode == "send":
+            payload = {
+                "action": "send",
+                "chat_jid": entry.chat_jid,
+                "text": text,
+            }
+        elif self.compose_mode == "reply":
+            payload = {
+                "action": "reply",
+                "chat_jid": entry.chat_jid,
+                "message_id": entry.message_id,
+                "sender_jid": entry.sender_jid,
+                "text": text,
+            }
+        else:
+            self.hide_compose()
+            return
+
+        log(f"Sending: {payload}")
+        self.socket_writer.write((json.dumps(payload) + "\n").encode())
+        await self.socket_writer.drain()
+        self.hide_compose()
 
 
 def main() -> None:

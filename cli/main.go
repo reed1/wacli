@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,9 +17,12 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -128,6 +132,7 @@ func initMessageDB() (*sql.DB, error) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id TEXT NOT NULL DEFAULT '',
 			timestamp INTEGER NOT NULL,
 			chat_jid TEXT NOT NULL,
 			chat_name TEXT NOT NULL,
@@ -179,6 +184,14 @@ func (a *App) startSocketServer() (net.Listener, error) {
 	return listener, nil
 }
 
+type SocketCommand struct {
+	Action    string `json:"action"`
+	ChatJID   string `json:"chat_jid"`
+	MessageID string `json:"message_id"`
+	SenderJID string `json:"sender_jid"`
+	Text      string `json:"text"`
+}
+
 func (a *App) handleSocketConn(conn net.Conn) {
 	a.connMu.Lock()
 	a.socketConns[conn] = struct{}{}
@@ -191,11 +204,26 @@ func (a *App) handleSocketConn(conn net.Conn) {
 		conn.Close()
 	}()
 
-	buf := make([]byte, 1024)
-	for {
-		_, err := conn.Read(buf)
-		if err != nil {
-			return
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var cmd SocketCommand
+		if err := json.Unmarshal(line, &cmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to parse socket command: %v\n", err)
+			continue
+		}
+
+		switch cmd.Action {
+		case "send":
+			if err := a.sendMessage(cmd.ChatJID, cmd.Text); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to send message: %v\n", err)
+			}
+		case "reply":
+			if err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
 	}
 }
@@ -228,6 +256,50 @@ func (a *App) broadcastCall(call *Call) {
 	for conn := range a.socketConns {
 		conn.Write(data)
 	}
+}
+
+func (a *App) sendMessage(chatJID string, text string) error {
+	jid, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid JID: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		Conversation: proto.String(text),
+	}
+
+	_, err = a.client.SendMessage(a.ctx, jid, msg)
+	if err != nil {
+		return fmt.Errorf("send failed: %w", err)
+	}
+
+	fmt.Printf("Sent message to %s\n", chatJID)
+	return nil
+}
+
+func (a *App) replyToMessage(chatJID string, messageID string, senderJID string, text string) error {
+	jid, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(text),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:    proto.String(messageID),
+				Participant: proto.String(senderJID),
+			},
+		},
+	}
+
+	_, err = a.client.SendMessage(a.ctx, jid, msg)
+	if err != nil {
+		return fmt.Errorf("reply failed: %w", err)
+	}
+
+	fmt.Printf("Replied to message %s in %s\n", messageID, chatJID)
+	return nil
 }
 
 func (a *App) loginWithQR() error {

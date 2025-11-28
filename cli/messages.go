@@ -15,6 +15,7 @@ import (
 type Message struct {
 	Type        string `json:"type"`
 	ID          int64  `json:"id"`
+	MessageID   string `json:"message_id"`
 	Timestamp   int64  `json:"timestamp"`
 	ChatJID     string `json:"chat_jid"`
 	ChatName    string `json:"chat_name"`
@@ -55,6 +56,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	message := &Message{
 		Type:        "message",
+		MessageID:   msg.Info.ID,
 		Timestamp:   msg.Info.Timestamp.Unix(),
 		ChatJID:     chatJID.String(),
 		ChatName:    chatName,
