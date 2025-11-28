@@ -1,0 +1,459 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/mdp/qrterminal/v3"
+	_ "github.com/mattn/go-sqlite3"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
+)
+
+const (
+	socketPath  = "/tmp/wacli.sock"
+	maxMessages = 200
+	trimToCount = 150
+)
+
+type Config struct {
+	IncludeStatusMessages bool
+	IncludeMutedMessages  bool
+	EnableNotifySend      bool
+}
+
+type Message struct {
+	ID         int64  `json:"id"`
+	ChatJID    string `json:"chat_jid"`
+	ChatName   string `json:"chat_name"`
+	SenderJID  string `json:"sender_jid"`
+	SenderName string `json:"sender_name"`
+	Text       string `json:"text"`
+	Timestamp  int64  `json:"timestamp"`
+	IsGroup    bool   `json:"is_group"`
+}
+
+type App struct {
+	client      *whatsmeow.Client
+	ctx         context.Context
+	msgDB       *sql.DB
+	config      Config
+	socketConns map[net.Conn]struct{}
+	connMu      sync.RWMutex
+}
+
+func loadConfig() Config {
+	godotenv.Load()
+
+	return Config{
+		IncludeStatusMessages: os.Getenv("INCLUDE_STATUS_MESSAGES") == "true",
+		IncludeMutedMessages:  os.Getenv("INCLUDE_MUTED_MESSAGES") == "true",
+		EnableNotifySend:      os.Getenv("ENABLE_NOTIFY_SEND") != "false",
+	}
+}
+
+func main() {
+	config := loadConfig()
+	ctx := context.Background()
+
+	msgDB, err := initMessageDB()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init message database: %v\n", err)
+		os.Exit(1)
+	}
+	defer msgDB.Close()
+
+	dbLog := waLog.Stdout("Database", "ERROR", true)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:wacli.db?_foreign_keys=on", dbLog)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create database: %v\n", err)
+		os.Exit(1)
+	}
+
+	deviceStore, err := container.GetFirstDevice(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get device store: %v\n", err)
+		os.Exit(1)
+	}
+
+	clientLog := waLog.Stdout("Client", "ERROR", true)
+	client := whatsmeow.NewClient(deviceStore, clientLog)
+	client.EnableAutoReconnect = true
+
+	app := &App{
+		client:      client,
+		ctx:         ctx,
+		msgDB:       msgDB,
+		config:      config,
+		socketConns: make(map[net.Conn]struct{}),
+	}
+
+	client.AddEventHandler(app.handleEvent)
+
+	listener, err := app.startSocketServer()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start socket server: %v\n", err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	defer os.Remove(socketPath)
+
+	if client.Store.ID == nil {
+		if err := app.loginWithQR(); err != nil {
+			fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		if err := client.Connect(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Println("Connected. Watching for messages...")
+	fmt.Printf("Socket server listening on %s\n", socketPath)
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+
+	client.Disconnect()
+	fmt.Println("\nDisconnected.")
+}
+
+func initMessageDB() (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", "file:messages.db?_foreign_keys=on")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_jid TEXT NOT NULL,
+			chat_name TEXT NOT NULL,
+			sender_jid TEXT NOT NULL,
+			sender_name TEXT NOT NULL,
+			text TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			is_group INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func (a *App) startSocketServer() (net.Listener, error) {
+	os.Remove(socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go a.handleSocketConn(conn)
+		}
+	}()
+
+	return listener, nil
+}
+
+func (a *App) handleSocketConn(conn net.Conn) {
+	a.connMu.Lock()
+	a.socketConns[conn] = struct{}{}
+	a.connMu.Unlock()
+
+	defer func() {
+		a.connMu.Lock()
+		delete(a.socketConns, conn)
+		a.connMu.Unlock()
+		conn.Close()
+	}()
+
+	buf := make([]byte, 1024)
+	for {
+		_, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (a *App) broadcastMessage(msg *Message) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	a.connMu.RLock()
+	defer a.connMu.RUnlock()
+
+	for conn := range a.socketConns {
+		conn.Write(data)
+	}
+}
+
+func (a *App) loginWithQR() error {
+	qrChan, _ := a.client.GetQRChannel(a.ctx)
+	if err := a.client.Connect(); err != nil {
+		return err
+	}
+
+	for evt := range qrChan {
+		if evt.Event == "code" {
+			fmt.Println("Scan this QR code to login:")
+			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+		} else {
+			fmt.Printf("Login event: %s\n", evt.Event)
+		}
+	}
+	return nil
+}
+
+func (a *App) handleEvent(evt interface{}) {
+	switch v := evt.(type) {
+	case *events.Message:
+		a.handleMessage(v)
+	case *events.Connected:
+		fmt.Println("Connected to WhatsApp")
+	case *events.Disconnected:
+		fmt.Println("Disconnected from WhatsApp")
+	case *events.LoggedOut:
+		fmt.Println("Logged out from WhatsApp")
+		os.Exit(0)
+	}
+}
+
+func (a *App) handleMessage(msg *events.Message) {
+	if msg.Info.IsFromMe {
+		return
+	}
+
+	chatJID := msg.Info.Chat
+
+	if chatJID.Server == "broadcast" && !a.config.IncludeStatusMessages {
+		return
+	}
+
+	isMuted := a.isMuted(chatJID)
+	isMentioned := a.isMentioned(msg)
+
+	if isMuted && !isMentioned && !a.config.IncludeMutedMessages {
+		return
+	}
+
+	text := extractText(msg.Message)
+	if text == "" {
+		text = "[Media/Other]"
+	}
+
+	senderName := a.getSenderName(msg)
+	chatName := a.getChatName(msg)
+
+	message := &Message{
+		ChatJID:    chatJID.String(),
+		ChatName:   chatName,
+		SenderJID:  msg.Info.Sender.String(),
+		SenderName: senderName,
+		Text:       text,
+		Timestamp:  msg.Info.Timestamp.Unix(),
+		IsGroup:    msg.Info.IsGroup,
+	}
+
+	if err := a.saveMessage(message); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save message: %v\n", err)
+	}
+
+	a.broadcastMessage(message)
+
+	if a.config.EnableNotifySend && !isMuted {
+		var title string
+		if msg.Info.IsGroup {
+			title = fmt.Sprintf("%s @ %s", senderName, chatName)
+		} else {
+			title = senderName
+		}
+		a.sendNotification(title, text)
+	}
+}
+
+func (a *App) saveMessage(msg *Message) error {
+	result, err := a.msgDB.Exec(`
+		INSERT INTO messages (chat_jid, chat_name, sender_jid, sender_name, text, timestamp, is_group)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, msg.ChatJID, msg.ChatName, msg.SenderJID, msg.SenderName, msg.Text, msg.Timestamp, msg.IsGroup)
+	if err != nil {
+		return err
+	}
+
+	msg.ID, _ = result.LastInsertId()
+
+	var count int
+	err = a.msgDB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count > maxMessages {
+		_, err = a.msgDB.Exec(`
+			DELETE FROM messages WHERE id NOT IN (
+				SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?
+			)
+		`, trimToCount)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (a *App) isMuted(chatJID types.JID) bool {
+	settings, err := a.client.Store.ChatSettings.GetChatSettings(a.ctx, chatJID)
+	if err != nil || !settings.Found {
+		return false
+	}
+
+	if settings.MutedUntil == store.MutedForever {
+		return true
+	}
+	if settings.MutedUntil.After(time.Now()) {
+		return true
+	}
+	return false
+}
+
+func (a *App) isMentioned(msg *events.Message) bool {
+	myJID := a.client.Store.ID
+	if myJID == nil {
+		return false
+	}
+
+	var mentionedJIDs []string
+	if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
+		if ctx := ext.GetContextInfo(); ctx != nil {
+			mentionedJIDs = ctx.GetMentionedJID()
+		}
+	}
+
+	for _, jid := range mentionedJIDs {
+		if jid == myJID.ToNonAD().String() || jid == myJID.String() {
+			return true
+		}
+	}
+	return false
+}
+
+func extractText(msg *waE2E.Message) string {
+	if msg == nil {
+		return ""
+	}
+	if text := msg.GetConversation(); text != "" {
+		return text
+	}
+	if ext := msg.GetExtendedTextMessage(); ext != nil {
+		return ext.GetText()
+	}
+	if img := msg.GetImageMessage(); img != nil {
+		if cap := img.GetCaption(); cap != "" {
+			return "[Image] " + cap
+		}
+		return "[Image]"
+	}
+	if vid := msg.GetVideoMessage(); vid != nil {
+		if cap := vid.GetCaption(); cap != "" {
+			return "[Video] " + cap
+		}
+		return "[Video]"
+	}
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		return "[Document] " + doc.GetFileName()
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		if audio.GetPTT() {
+			return "[Voice Message]"
+		}
+		return "[Audio]"
+	}
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		return "[Sticker]"
+	}
+	if contact := msg.GetContactMessage(); contact != nil {
+		return "[Contact] " + contact.GetDisplayName()
+	}
+	if loc := msg.GetLocationMessage(); loc != nil {
+		return "[Location]"
+	}
+	return ""
+}
+
+func (a *App) getSenderName(msg *events.Message) string {
+	senderJID := msg.Info.Sender
+	if msg.Info.IsGroup {
+		contact, err := a.client.Store.Contacts.GetContact(a.ctx, senderJID)
+		if err == nil && contact.Found {
+			if contact.PushName != "" {
+				return contact.PushName
+			}
+			if contact.FullName != "" {
+				return contact.FullName
+			}
+		}
+	}
+	if msg.Info.PushName != "" {
+		return msg.Info.PushName
+	}
+	return senderJID.User
+}
+
+func (a *App) getChatName(msg *events.Message) string {
+	chatJID := msg.Info.Chat
+	if msg.Info.IsGroup {
+		groupInfo, err := a.client.GetGroupInfo(a.ctx, chatJID)
+		if err == nil {
+			return groupInfo.Name
+		}
+	}
+	contact, err := a.client.Store.Contacts.GetContact(a.ctx, chatJID)
+	if err == nil && contact.Found {
+		if contact.PushName != "" {
+			return contact.PushName
+		}
+		if contact.FullName != "" {
+			return contact.FullName
+		}
+	}
+	return chatJID.User
+}
+
+func (a *App) sendNotification(title, body string) {
+	cmd := exec.Command("notify-send", "-a", "WhatsApp", "-i", "whatsapp", title, body)
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to send notification: %v\n", err)
+	}
+}
