@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -34,7 +33,6 @@ const (
 type Config struct {
 	IncludeStatusMessages bool
 	IncludeMutedMessages  bool
-	EnableNotifySend      bool
 }
 
 type Message struct {
@@ -65,7 +63,6 @@ func loadConfig() Config {
 	return Config{
 		IncludeStatusMessages: os.Getenv("INCLUDE_STATUS_MESSAGES") == "true",
 		IncludeMutedMessages:  os.Getenv("INCLUDE_MUTED_MESSAGES") == "true",
-		EnableNotifySend:      os.Getenv("ENABLE_NOTIFY_SEND") != "false",
 	}
 }
 
@@ -297,16 +294,6 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	a.broadcastMessage(message)
-
-	if a.config.EnableNotifySend && (!isMuted || isMentioned || isReplyToMe) {
-		var title string
-		if msg.Info.IsGroup {
-			title = fmt.Sprintf("%s @ %s", senderName, chatName)
-		} else {
-			title = senderName
-		}
-		a.sendNotification(title, text)
-	}
 }
 
 func (a *App) saveMessage(msg *Message) error {
@@ -511,9 +498,3 @@ func (a *App) getChatName(msg *events.Message) string {
 	return chatJID.User
 }
 
-func (a *App) sendNotification(title, body string) {
-	cmd := exec.Command("notify-send", "-a", "WhatsApp", "-i", "whatsapp", title, body)
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to send notification: %v\n", err)
-	}
-}
