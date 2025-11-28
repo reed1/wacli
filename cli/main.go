@@ -38,14 +38,16 @@ type Config struct {
 }
 
 type Message struct {
-	ID         int64  `json:"id"`
-	ChatJID    string `json:"chat_jid"`
-	ChatName   string `json:"chat_name"`
-	SenderJID  string `json:"sender_jid"`
-	SenderName string `json:"sender_name"`
-	Text       string `json:"text"`
-	Timestamp  int64  `json:"timestamp"`
-	IsGroup    bool   `json:"is_group"`
+	ID          int64  `json:"id"`
+	Timestamp   int64  `json:"timestamp"`
+	ChatJID     string `json:"chat_jid"`
+	ChatName    string `json:"chat_name"`
+	SenderJID   string `json:"sender_jid"`
+	SenderName  string `json:"sender_name"`
+	IsGroup     bool   `json:"is_group"`
+	IsMuted     bool   `json:"is_muted"`
+	IsReplyToMe bool   `json:"is_reply_to_me"`
+	Text        string `json:"text"`
 }
 
 type App struct {
@@ -145,13 +147,15 @@ func initMessageDB() (*sql.DB, error) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp INTEGER NOT NULL,
 			chat_jid TEXT NOT NULL,
 			chat_name TEXT NOT NULL,
 			sender_jid TEXT NOT NULL,
 			sender_name TEXT NOT NULL,
-			text TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			is_group INTEGER NOT NULL
+			is_group INTEGER NOT NULL,
+			is_muted INTEGER NOT NULL,
+			is_reply_to_me INTEGER NOT NULL,
+			text TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 	`)
@@ -262,8 +266,9 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	isMuted := a.isMuted(chatJID)
 	isMentioned := a.isMentioned(msg)
+	isReplyToMe := a.isReplyToMe(msg)
 
-	if isMuted && !isMentioned && !a.config.IncludeMutedMessages {
+	if isMuted && !isMentioned && !isReplyToMe && !a.config.IncludeMutedMessages {
 		return
 	}
 
@@ -276,13 +281,15 @@ func (a *App) handleMessage(msg *events.Message) {
 	chatName := a.getChatName(msg)
 
 	message := &Message{
-		ChatJID:    chatJID.String(),
-		ChatName:   chatName,
-		SenderJID:  msg.Info.Sender.String(),
-		SenderName: senderName,
-		Text:       text,
-		Timestamp:  msg.Info.Timestamp.Unix(),
-		IsGroup:    msg.Info.IsGroup,
+		Timestamp:   msg.Info.Timestamp.Unix(),
+		ChatJID:     chatJID.String(),
+		ChatName:    chatName,
+		SenderJID:   msg.Info.Sender.String(),
+		SenderName:  senderName,
+		IsGroup:     msg.Info.IsGroup,
+		IsMuted:     isMuted,
+		IsReplyToMe: isReplyToMe,
+		Text:        text,
 	}
 
 	if err := a.saveMessage(message); err != nil {
@@ -291,7 +298,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	a.broadcastMessage(message)
 
-	if a.config.EnableNotifySend && !isMuted {
+	if a.config.EnableNotifySend && (!isMuted || isMentioned || isReplyToMe) {
 		var title string
 		if msg.Info.IsGroup {
 			title = fmt.Sprintf("%s @ %s", senderName, chatName)
@@ -304,9 +311,9 @@ func (a *App) handleMessage(msg *events.Message) {
 
 func (a *App) saveMessage(msg *Message) error {
 	result, err := a.msgDB.Exec(`
-		INSERT INTO messages (chat_jid, chat_name, sender_jid, sender_name, text, timestamp, is_group)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, msg.ChatJID, msg.ChatName, msg.SenderJID, msg.SenderName, msg.Text, msg.Timestamp, msg.IsGroup)
+		INSERT INTO messages (timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, text)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, msg.Timestamp, msg.ChatJID, msg.ChatName, msg.SenderJID, msg.SenderName, msg.IsGroup, msg.IsMuted, msg.IsReplyToMe, msg.Text)
 	if err != nil {
 		return err
 	}
@@ -350,23 +357,76 @@ func (a *App) isMuted(chatJID types.JID) bool {
 
 func (a *App) isMentioned(msg *events.Message) bool {
 	myJID := a.client.Store.ID
+	myLID := a.client.Store.LID
 	if myJID == nil {
 		return false
 	}
 
-	var mentionedJIDs []string
-	if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
-		if ctx := ext.GetContextInfo(); ctx != nil {
-			mentionedJIDs = ctx.GetMentionedJID()
-		}
+	ctx := getContextInfo(msg.Message)
+	if ctx == nil {
+		return false
 	}
 
-	for _, jid := range mentionedJIDs {
+	for _, jid := range ctx.GetMentionedJID() {
 		if jid == myJID.ToNonAD().String() || jid == myJID.String() {
+			return true
+		}
+		if !myLID.IsEmpty() && jid == myLID.ToNonAD().String() {
 			return true
 		}
 	}
 	return false
+}
+
+func (a *App) isReplyToMe(msg *events.Message) bool {
+	myJID := a.client.Store.ID
+	myLID := a.client.Store.LID
+	if myJID == nil {
+		return false
+	}
+
+	ctx := getContextInfo(msg.Message)
+	if ctx == nil {
+		return false
+	}
+
+	participant := ctx.GetParticipant()
+	if participant == "" {
+		return false
+	}
+
+	if participant == myJID.ToNonAD().String() || participant == myJID.String() {
+		return true
+	}
+	if !myLID.IsEmpty() && participant == myLID.ToNonAD().String() {
+		return true
+	}
+	return false
+}
+
+func getContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
+	if msg == nil {
+		return nil
+	}
+	if ext := msg.GetExtendedTextMessage(); ext != nil {
+		return ext.GetContextInfo()
+	}
+	if img := msg.GetImageMessage(); img != nil {
+		return img.GetContextInfo()
+	}
+	if vid := msg.GetVideoMessage(); vid != nil {
+		return vid.GetContextInfo()
+	}
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		return doc.GetContextInfo()
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		return audio.GetContextInfo()
+	}
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		return sticker.GetContextInfo()
+	}
+	return nil
 }
 
 func extractText(msg *waE2E.Message) string {

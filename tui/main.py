@@ -19,13 +19,15 @@ DB_PATH = Path(__file__).parent.parent / "cli" / "messages.db"
 @dataclass
 class Message:
     id: int
+    timestamp: int
     chat_jid: str
     chat_name: str
     sender_jid: str
     sender_name: str
-    text: str
-    timestamp: int
     is_group: bool
+    is_muted: bool
+    is_reply_to_me: bool
+    text: str
 
     @property
     def formatted_time(self) -> str:
@@ -39,9 +41,10 @@ class Message:
 
     @property
     def title(self) -> str:
+        prefix = "[Reply] " if self.is_reply_to_me else ""
         if self.is_group:
-            return f"{self.sender_name} @ {self.chat_name}"
-        return self.sender_name
+            return f"{prefix}{self.sender_name} @ {self.chat_name}"
+        return f"{prefix}{self.sender_name}"
 
 
 class MessageWidget(Static):
@@ -105,21 +108,21 @@ class WaCLIApp(App):
             return
 
         conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, chat_jid, chat_name, sender_jid, sender_name, text, timestamp, is_group "
-            "FROM messages ORDER BY timestamp ASC"
-        )
+        cursor.execute("SELECT * FROM messages ORDER BY timestamp ASC")
         for row in cursor.fetchall():
             self.messages.append(Message(
-                id=row[0],
-                chat_jid=row[1],
-                chat_name=row[2],
-                sender_jid=row[3],
-                sender_name=row[4],
-                text=row[5],
-                timestamp=row[6],
-                is_group=bool(row[7]),
+                id=row["id"],
+                timestamp=row["timestamp"],
+                chat_jid=row["chat_jid"],
+                chat_name=row["chat_name"],
+                sender_jid=row["sender_jid"],
+                sender_name=row["sender_name"],
+                is_group=bool(row["is_group"]),
+                is_muted=bool(row["is_muted"]),
+                is_reply_to_me=bool(row["is_reply_to_me"]),
+                text=row["text"],
             ))
         conn.close()
 
@@ -145,13 +148,15 @@ class WaCLIApp(App):
                     data = json.loads(line.decode())
                     msg = Message(
                         id=data.get("id", 0),
+                        timestamp=data["timestamp"],
                         chat_jid=data["chat_jid"],
                         chat_name=data["chat_name"],
                         sender_jid=data["sender_jid"],
                         sender_name=data["sender_name"],
-                        text=data["text"],
-                        timestamp=data["timestamp"],
                         is_group=data["is_group"],
+                        is_muted=data["is_muted"],
+                        is_reply_to_me=data["is_reply_to_me"],
+                        text=data["text"],
                     )
                     self.messages.append(msg)
                     message_list = self.query_one(MessageList)
