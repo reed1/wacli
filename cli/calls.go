@@ -10,7 +10,6 @@ import (
 )
 
 type Call struct {
-	Type       string `json:"type"`
 	ID         int64  `json:"id"`
 	Timestamp  int64  `json:"timestamp"`
 	CallID     string `json:"call_id"`
@@ -32,7 +31,6 @@ func (a *App) handleCallOffer(evt *events.CallOffer) {
 	}
 
 	call := &Call{
-		Type:       "call",
 		Timestamp:  evt.BasicCallMeta.Timestamp.Unix(),
 		CallID:     evt.BasicCallMeta.CallID,
 		CallerJID:  evt.BasicCallMeta.From.String(),
@@ -44,7 +42,7 @@ func (a *App) handleCallOffer(evt *events.CallOffer) {
 
 	if err := a.saveCall(call); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save call: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	a.broadcastCall(call)
 }
@@ -60,7 +58,6 @@ func (a *App) handleCallOfferNotice(evt *events.CallOfferNotice) {
 	}
 
 	call := &Call{
-		Type:       "call",
 		Timestamp:  evt.BasicCallMeta.Timestamp.Unix(),
 		CallID:     evt.BasicCallMeta.CallID,
 		CallerJID:  evt.BasicCallMeta.From.String(),
@@ -72,7 +69,7 @@ func (a *App) handleCallOfferNotice(evt *events.CallOfferNotice) {
 
 	if err := a.saveCall(call); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save call: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	a.broadcastCall(call)
 }

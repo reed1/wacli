@@ -13,7 +13,6 @@ import (
 )
 
 type Message struct {
-	Type        string `json:"type"`
 	ID          int64  `json:"id"`
 	MessageID   string `json:"message_id"`
 	Timestamp   int64  `json:"timestamp"`
@@ -55,7 +54,6 @@ func (a *App) handleMessage(msg *events.Message) {
 	chatName := a.getChatName(msg)
 
 	message := &Message{
-		Type:        "message",
 		MessageID:   msg.Info.ID,
 		Timestamp:   msg.Info.Timestamp.Unix(),
 		ChatJID:     chatJID.String(),
@@ -70,6 +68,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	if err := a.saveMessage(message); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save message: %v\n", err)
+		os.Exit(1)
 	}
 
 	a.broadcastMessage(message)

@@ -8,9 +8,11 @@ from pathlib import Path
 
 LOG_FILE = Path(__file__).parent / "wacli.log"
 
+
 def log(msg: str) -> None:
     with open(LOG_FILE, "a") as f:
         f.write(f"{datetime.now().isoformat()} {msg}\n")
+
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -114,9 +116,12 @@ class MessageList(ScrollableContainer):
 class ComposeInput(Input):
     DEFAULT_CSS = """
     ComposeInput {
-        dock: bottom;
         display: none;
-        margin: 0 1;
+        layer: above;
+        width: 60%;
+        height: auto;
+        border: tall $primary;
+        background: $surface;
     }
     ComposeInput.visible {
         display: block;
@@ -133,7 +138,12 @@ class ComposeInput(Input):
 
 class WaCLIApp(App):
     CSS = """
+    Screen {
+        layers: base above;
+        align: center middle;
+    }
     MessageList {
+        layer: base;
         height: 100%;
         scrollbar-gutter: stable;
     }
@@ -185,33 +195,37 @@ class WaCLIApp(App):
         messages: list[Entry] = []
         cursor.execute("SELECT * FROM messages")
         for row in cursor.fetchall():
-            messages.append(Message(
-                id=row["id"],
-                message_id=row["message_id"],
-                timestamp=row["timestamp"],
-                chat_jid=row["chat_jid"],
-                chat_name=row["chat_name"],
-                sender_jid=row["sender_jid"],
-                sender_name=row["sender_name"],
-                is_group=bool(row["is_group"]),
-                is_muted=bool(row["is_muted"]),
-                is_reply_to_me=bool(row["is_reply_to_me"]),
-                text=row["text"],
-            ))
+            messages.append(
+                Message(
+                    id=row["id"],
+                    message_id=row["message_id"],
+                    timestamp=row["timestamp"],
+                    chat_jid=row["chat_jid"],
+                    chat_name=row["chat_name"],
+                    sender_jid=row["sender_jid"],
+                    sender_name=row["sender_name"],
+                    is_group=bool(row["is_group"]),
+                    is_muted=bool(row["is_muted"]),
+                    is_reply_to_me=bool(row["is_reply_to_me"]),
+                    text=row["text"],
+                )
+            )
 
         calls: list[Entry] = []
         cursor.execute("SELECT * FROM calls")
         for row in cursor.fetchall():
-            calls.append(Call(
-                id=row["id"],
-                timestamp=row["timestamp"],
-                call_id=row["call_id"],
-                caller_jid=row["caller_jid"],
-                caller_name=row["caller_name"],
-                is_group=bool(row["is_group"]),
-                group_jid=row["group_jid"],
-                group_name=row["group_name"],
-            ))
+            calls.append(
+                Call(
+                    id=row["id"],
+                    timestamp=row["timestamp"],
+                    call_id=row["call_id"],
+                    caller_jid=row["caller_jid"],
+                    caller_name=row["caller_name"],
+                    is_group=bool(row["is_group"]),
+                    group_jid=row["group_jid"],
+                    group_name=row["group_name"],
+                )
+            )
 
         conn.close()
         self.entries = sorted(messages + calls, key=lambda e: e.timestamp)
@@ -255,8 +269,9 @@ class WaCLIApp(App):
             log(f"listen_socket: got line: {line}")
             if not line:
                 raise ConnectionError("Socket connection closed")
-            data = json.loads(line.decode())
-            entry_type = data.get("type")
+            event = json.loads(line.decode())
+            entry_type = event["type"]
+            data = event["data"]
             entry: Entry
             if entry_type == "call":
                 entry = Call(

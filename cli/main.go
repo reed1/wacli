@@ -228,8 +228,14 @@ func (a *App) handleSocketConn(conn net.Conn) {
 	}
 }
 
+type SocketEvent struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
+
 func (a *App) broadcastMessage(msg *Message) {
-	data, err := json.Marshal(msg)
+	event := SocketEvent{Type: "message", Data: msg}
+	data, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
@@ -244,7 +250,8 @@ func (a *App) broadcastMessage(msg *Message) {
 }
 
 func (a *App) broadcastCall(call *Call) {
-	data, err := json.Marshal(call)
+	event := SocketEvent{Type: "call", Data: call}
+	data, err := json.Marshal(event)
 	if err != nil {
 		return
 	}
