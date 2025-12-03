@@ -388,5 +388,12 @@ func sendAttentionWindow() error {
 	}
 	data, _ := json.Marshal(payload)
 	_, err = conn.Write([]byte(fmt.Sprintf("add_attention_by_cmd %s", data)))
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Read server response before closing to avoid ConnectionResetError on server
+	buf := make([]byte, 256)
+	conn.Read(buf)
+	return nil
 }
