@@ -16,15 +16,16 @@ class WaCLIApp(App):
     CSS = """
     Screen {
         layers: default above;
+        align: center middle;
     }
     MessageList {
         height: 1fr;
+        width: 100%;
         scrollbar-gutter: stable;
     }
     ComposeInput {
         layer: above;
         width: 80%;
-        margin: auto;
     }
     """
 
