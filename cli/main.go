@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	socketPath  = "/tmp/wacli.sock"
+	runtimeDir  = "/tmp/rlocal/wacli"
+	socketPath  = runtimeDir + "/wacli.sock"
 	maxMessages = 200
 	trimToCount = 150
 )
@@ -165,6 +166,9 @@ func initMessageDB() (*sql.DB, error) {
 }
 
 func (a *App) startSocketServer() (net.Listener, error) {
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		return nil, err
+	}
 	os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
