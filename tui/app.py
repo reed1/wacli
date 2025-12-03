@@ -23,6 +23,8 @@ class WaCLIApp(App):
     }
     ComposeInput {
         layer: above;
+        width: 80%;
+        margin: auto;
     }
     """
 
