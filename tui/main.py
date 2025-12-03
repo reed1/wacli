@@ -121,7 +121,6 @@ class ComposeInput(Input):
     DEFAULT_CSS = """
     ComposeInput {
         display: none;
-        layer: above;
         width: 60%;
         height: auto;
         border: tall $primary;
@@ -143,13 +142,14 @@ class ComposeInput(Input):
 class WaCLIApp(App):
     CSS = """
     Screen {
-        layers: base above;
-        align: center middle;
+        layers: default above;
     }
     MessageList {
-        layer: base;
         height: 1fr;
         scrollbar-gutter: stable;
+    }
+    ComposeInput {
+        layer: above;
     }
     """
 
