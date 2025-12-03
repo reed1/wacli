@@ -82,6 +82,8 @@ class EntryWidget(Static):
     EntryWidget {
         height: 1;
         overflow: hidden;
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
     }
     EntryWidget.selected {
         background: $surface-lighten-1;
@@ -99,16 +101,11 @@ class EntryWidget(Static):
         if isinstance(self.entry, Message):
             msg = self.entry
             text_oneline = msg.text.replace("\n", " ")
-            max_text = 80
-            if len(text_oneline) > max_text:
-                text_preview = text_oneline[:max_text] + "..."
-            else:
-                text_preview = text_oneline
             if msg.is_group:
                 title = f"{msg.title} [bold magenta]👥[/] [magenta]{msg.chat_name}[/]"
             else:
                 title = msg.title
-            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {text_preview}"
+            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {text_oneline}"
         call = self.entry
         return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {call.title}[/]: Incoming call"
 
