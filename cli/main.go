@@ -384,7 +384,7 @@ func sendAttentionWindow() error {
 
 	payload := map[string]interface{}{
 		"id":      attentionID,
-		"command": []string{"toggle-window", "wacli-tui"},
+		"command": []string{"toggle-window", "show", "wacli-tui"},
 	}
 	data, _ := json.Marshal(payload)
 	_, err = conn.Write([]byte(fmt.Sprintf("add_attention_by_cmd %s", data)))
