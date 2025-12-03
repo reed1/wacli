@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import pyperclip
+
 LOG_FILE = Path(__file__).parent / "wacli.log"
 
 
@@ -46,8 +48,6 @@ class Message:
     @property
     def title(self) -> str:
         prefix = "↩ " if self.is_reply_to_me else ""
-        if self.is_group:
-            return f"{prefix}{self.sender_name} @ {self.chat_name}"
         return f"{prefix}{self.sender_name}"
 
 
@@ -104,7 +104,11 @@ class EntryWidget(Static):
                 text_preview = text_oneline[:max_text] + "..."
             else:
                 text_preview = text_oneline
-            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {msg.title}[/]: {text_preview}"
+            if msg.is_group:
+                title = f"{msg.title} [bold magenta]👥[/] [magenta]{msg.chat_name}[/]"
+            else:
+                title = msg.title
+            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {text_preview}"
         call = self.entry
         return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {call.title}[/]: Incoming call"
 
@@ -144,7 +148,7 @@ class WaCLIApp(App):
     }
     MessageList {
         layer: base;
-        height: 100%;
+        height: 1fr;
         scrollbar-gutter: stable;
     }
     """
@@ -159,6 +163,7 @@ class WaCLIApp(App):
         Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
         Binding("enter", "compose_send", "Send", show=False),
         Binding("r", "compose_reply", "Reply"),
+        Binding("y", "copy_message", "Copy"),
     ]
 
     HALF_PAGE = 15
@@ -327,6 +332,13 @@ class WaCLIApp(App):
 
     def action_half_page_up(self) -> None:
         self.update_selection(self.selected_index - self.HALF_PAGE)
+
+    def action_copy_message(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        pyperclip.copy(entry.text)
+        self.notify("Copied to clipboard")
 
     def get_selected_entry(self) -> Entry | None:
         if 0 <= self.selected_index < len(self.entries):
