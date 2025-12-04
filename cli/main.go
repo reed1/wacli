@@ -58,6 +58,11 @@ func loadConfig() Config {
 }
 
 func main() {
+	command := "daemon"
+	if len(os.Args) > 1 {
+		command = os.Args[1]
+	}
+
 	config := loadConfig()
 	ctx := context.Background()
 
@@ -95,6 +100,23 @@ func main() {
 
 	client.AddEventHandler(app.handleEvent)
 
+	if command == "daemon" {
+		runDaemon(app)
+	} else if command == "login" {
+		runLogin(app)
+	} else {
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
+		fmt.Fprintf(os.Stderr, "Usage: wacli [daemon|login]\n")
+		os.Exit(1)
+	}
+}
+
+func runDaemon(app *App) {
+	if app.client.Store.ID == nil {
+		fmt.Fprintf(os.Stderr, "Device not logged in. Run 'wacli login' first.\n")
+		os.Exit(1)
+	}
+
 	listener, err := app.startSocketServer()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start socket server: %v\n", err)
@@ -103,16 +125,9 @@ func main() {
 	defer listener.Close()
 	defer os.Remove(socketPath)
 
-	if client.Store.ID == nil {
-		if err := app.loginWithQR(); err != nil {
-			fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		if err := client.Connect(); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
-			os.Exit(1)
-		}
+	if err := app.client.Connect(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("Connected. Watching for messages...")
@@ -122,8 +137,22 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
-	client.Disconnect()
+	app.client.Disconnect()
 	fmt.Println("\nDisconnected.")
+}
+
+func runLogin(app *App) {
+	if app.client.Store.ID != nil {
+		fmt.Println("Device already logged in.")
+		os.Exit(0)
+	}
+
+	if err := app.loginWithQR(); err != nil {
+		fmt.Fprintf(os.Stderr, "Login failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Login complete. You can now run 'wacli daemon' or start the systemd service.")
 }
 
 func initMessageDB() (*sql.DB, error) {
