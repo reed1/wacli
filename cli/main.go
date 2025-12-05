@@ -359,8 +359,10 @@ func (a *App) loginWithQR() error {
 		if evt.Event == "code" {
 			fmt.Println("Scan this QR code to login:")
 			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+		} else if evt.Event == "success" {
+			fmt.Println("Login successful")
 		} else {
-			fmt.Printf("Login event: %s\n", evt.Event)
+			panic(fmt.Sprintf("Login failed: %s", evt.Event))
 		}
 	}
 	return nil
