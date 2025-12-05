@@ -38,10 +38,15 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	isMuted := a.isMuted(chatJID)
+	isArchived := a.isArchived(chatJID)
 	isMentioned := a.isMentioned(msg)
 	isReplyToMe := a.isReplyToMe(msg)
 
 	if isMuted && !isMentioned && !isReplyToMe && !a.config.IncludeMutedMessages {
+		return
+	}
+
+	if isArchived && !isMentioned && !isReplyToMe {
 		return
 	}
 
@@ -122,6 +127,14 @@ func (a *App) isMuted(chatJID types.JID) bool {
 		return true
 	}
 	return false
+}
+
+func (a *App) isArchived(chatJID types.JID) bool {
+	settings, err := a.client.Store.ChatSettings.GetChatSettings(a.ctx, chatJID)
+	if err != nil || !settings.Found {
+		return false
+	}
+	return settings.Archived
 }
 
 func (a *App) isMentioned(msg *events.Message) bool {
