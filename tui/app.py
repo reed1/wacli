@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sqlite3
 
 import pyperclip
 from textual.app import App, ComposeResult
@@ -8,7 +7,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
 
 from tui.models import Call, Entry, Message
-from tui.utils import DB_PATH, SOCKET_PATH, log
+from tui.utils import SOCKET_PATH, log
 from tui.widgets import ComposeInput, EntryWidget, MessageList
 
 
@@ -60,56 +59,8 @@ class WaCLIApp(App):
     async def on_mount(self) -> None:
         log("on_mount: start")
         self.title = "WhatsApp Messages"
-        self.load_entries_from_db()
-        self.render_entries()
         log("on_mount: starting worker")
         self.run_worker(self.listen_socket(), exclusive=True)
-
-    def load_entries_from_db(self) -> None:
-        if not DB_PATH.exists():
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        messages: list[Entry] = []
-        cursor.execute("SELECT * FROM messages")
-        for row in cursor.fetchall():
-            messages.append(
-                Message(
-                    id=row["id"],
-                    message_id=row["message_id"],
-                    timestamp=row["timestamp"],
-                    chat_jid=row["chat_jid"],
-                    chat_name=row["chat_name"],
-                    sender_jid=row["sender_jid"],
-                    sender_name=row["sender_name"],
-                    is_group=bool(row["is_group"]),
-                    is_muted=bool(row["is_muted"]),
-                    is_reply_to_me=bool(row["is_reply_to_me"]),
-                    text=row["text"],
-                )
-            )
-
-        calls: list[Entry] = []
-        cursor.execute("SELECT * FROM calls")
-        for row in cursor.fetchall():
-            calls.append(
-                Call(
-                    id=row["id"],
-                    timestamp=row["timestamp"],
-                    call_id=row["call_id"],
-                    caller_jid=row["caller_jid"],
-                    caller_name=row["caller_name"],
-                    is_group=bool(row["is_group"]),
-                    group_jid=row["group_jid"],
-                    group_name=row["group_name"],
-                )
-            )
-
-        conn.close()
-        self.entries = sorted(messages + calls, key=lambda e: e.timestamp)
 
     def render_entries(self) -> None:
         message_list = self.query_one(MessageList)
@@ -144,7 +95,9 @@ class WaCLIApp(App):
         log("listen_socket: connecting...")
         reader, writer = await asyncio.open_unix_connection(SOCKET_PATH)
         self.socket_writer = writer
-        log("listen_socket: connected")
+        log("listen_socket: connected, requesting entries")
+        writer.write(b'{"action":"get_entries"}\n')
+        await writer.drain()
         while True:
             line = await reader.readline()
             log(f"listen_socket: got line: {line}")
@@ -153,6 +106,10 @@ class WaCLIApp(App):
             event = json.loads(line.decode())
             entry_type = event["type"]
             data = event["data"]
+            if entry_type == "entries":
+                self.load_entries_from_data(data)
+                self.render_entries()
+                continue
             entry: Entry
             if entry_type == "call":
                 entry = Call(
@@ -190,6 +147,41 @@ class WaCLIApp(App):
             if was_at_end:
                 self.update_selection(len(self.entries) - 1)
             log("listen_socket: widget mounted")
+
+    def load_entries_from_data(self, data: dict) -> None:
+        messages: list[Entry] = []
+        for msg in data.get("messages") or []:
+            messages.append(
+                Message(
+                    id=msg.get("id", 0),
+                    message_id=msg.get("message_id", ""),
+                    timestamp=msg["timestamp"],
+                    chat_jid=msg["chat_jid"],
+                    chat_name=msg["chat_name"],
+                    sender_jid=msg["sender_jid"],
+                    sender_name=msg["sender_name"],
+                    is_group=msg["is_group"],
+                    is_muted=msg["is_muted"],
+                    is_reply_to_me=msg["is_reply_to_me"],
+                    text=msg["text"],
+                )
+            )
+        calls: list[Entry] = []
+        for call in data.get("calls") or []:
+            calls.append(
+                Call(
+                    id=call.get("id", 0),
+                    timestamp=call["timestamp"],
+                    call_id=call["call_id"],
+                    caller_jid=call["caller_jid"],
+                    caller_name=call["caller_name"],
+                    is_group=call["is_group"],
+                    group_jid=call["group_jid"],
+                    group_name=call["group_name"],
+                )
+            )
+        self.entries = sorted(messages + calls, key=lambda e: e.timestamp)
+        log(f"load_entries_from_data: loaded {len(self.entries)} entries")
 
     def action_select_next(self) -> None:
         self.update_selection(self.selected_index + 1)

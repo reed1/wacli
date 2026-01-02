@@ -255,6 +255,10 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			if err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
 			}
+		case "get_entries":
+			if err := a.sendEntries(conn); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to send entries: %v\n", err)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
@@ -296,6 +300,58 @@ func (a *App) broadcastCall(call *Call) {
 	for conn := range a.socketConns {
 		conn.Write(data)
 	}
+}
+
+type EntriesData struct {
+	Messages []Message `json:"messages"`
+	Calls    []Call    `json:"calls"`
+}
+
+func (a *App) sendEntries(conn net.Conn) error {
+	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, text FROM messages ORDER BY timestamp")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var messages []Message
+	for rows.Next() {
+		var msg Message
+		var isGroup, isMuted, isReplyToMe int
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.Text); err != nil {
+			return err
+		}
+		msg.IsGroup = isGroup != 0
+		msg.IsMuted = isMuted != 0
+		msg.IsReplyToMe = isReplyToMe != 0
+		messages = append(messages, msg)
+	}
+
+	callRows, err := a.msgDB.Query("SELECT id, timestamp, call_id, caller_jid, caller_name, is_group, group_jid, group_name FROM calls ORDER BY timestamp")
+	if err != nil {
+		return err
+	}
+	defer callRows.Close()
+
+	var calls []Call
+	for callRows.Next() {
+		var call Call
+		var isGroup int
+		if err := callRows.Scan(&call.ID, &call.Timestamp, &call.CallID, &call.CallerJID, &call.CallerName, &isGroup, &call.GroupJID, &call.GroupName); err != nil {
+			return err
+		}
+		call.IsGroup = isGroup != 0
+		calls = append(calls, call)
+	}
+
+	event := SocketEvent{Type: "entries", Data: EntriesData{Messages: messages, Calls: calls}}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	_, err = conn.Write(data)
+	return err
 }
 
 func (a *App) sendMessage(chatJID string, text string) error {
