@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$0")"
-SOCKET_PATH="${XDG_RUNTIME_DIR}/wacli.sock"
+SOCKET_PATH="/tmp/rlocal/wacli/wacli.sock"
 MAIN_MACHINE="rdzero"
 
 if [[ "$(hostname)" == "$MAIN_MACHINE" ]]; then
@@ -12,7 +12,8 @@ if [[ "$(hostname)" == "$MAIN_MACHINE" ]]; then
     exec ./wacli
 else
     # Other machines: forward local socket to main machine via SSH
-    REMOTE_SOCKET="/run/user/$(id -u)/wacli.sock"
+    REMOTE_SOCKET="/tmp/rlocal/wacli/wacli.sock"
+    mkdir -p "$(dirname "$SOCKET_PATH")"
     rm -f "$SOCKET_PATH"
     exec ssh -L "$SOCKET_PATH:$REMOTE_SOCKET" "$MAIN_MACHINE" "cd ~/proj/wacli/cli && ./wacli"
 fi
