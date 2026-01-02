@@ -26,12 +26,10 @@ import (
 )
 
 const (
-	runtimeDir          = "/tmp/rlocal/wacli"
-	socketPath          = runtimeDir + "/wacli.sock"
-	rworkspacesSocket   = "/tmp/rlocal/rworkspaces/sock"
-	attentionID         = "wacli"
-	maxMessages         = 200
-	trimToCount         = 150
+	runtimeDir  = "/tmp/rlocal/wacli"
+	socketPath  = runtimeDir + "/wacli.sock"
+	maxMessages = 200
+	trimToCount = 150
 )
 
 type Config struct {
@@ -282,11 +280,6 @@ func (a *App) broadcastMessage(msg *Message) {
 	for conn := range a.socketConns {
 		conn.Write(data)
 	}
-
-	if err := sendAttentionWindow(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to send attention: %v\n", err)
-		os.Exit(1)
-	}
 }
 
 func (a *App) broadcastCall(call *Call) {
@@ -406,25 +399,3 @@ func buildInsertParams(record interface{}) (columns []string, placeholders []str
 	return
 }
 
-func sendAttentionWindow() error {
-	conn, err := net.Dial("unix", rworkspacesSocket)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	payload := map[string]interface{}{
-		"id":      attentionID,
-		"command": []string{"toggle-window", "show", "wacli-tui"},
-	}
-	data, _ := json.Marshal(payload)
-	_, err = conn.Write([]byte(fmt.Sprintf("add_attention_by_cmd %s", data)))
-	if err != nil {
-		return err
-	}
-
-	// Read server response before closing to avoid ConnectionResetError on server
-	buf := make([]byte, 256)
-	conn.Read(buf)
-	return nil
-}
