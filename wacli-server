@@ -15,5 +15,5 @@ else
     REMOTE_SOCKET="/tmp/rlocal/wacli/wacli.sock"
     mkdir -p "$(dirname "$SOCKET_PATH")"
     rm -f "$SOCKET_PATH"
-    exec ssh -L "$SOCKET_PATH:$REMOTE_SOCKET" "$MAIN_MACHINE" "cd ~/proj/wacli/cli && ./wacli"
+    exec ssh -N -L "$SOCKET_PATH:$REMOTE_SOCKET" "$MAIN_MACHINE"
 fi
