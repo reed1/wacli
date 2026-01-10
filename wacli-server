@@ -9,6 +9,20 @@ MAIN_MACHINE="rdzero"
 if [[ "$(hostname)" == "$MAIN_MACHINE" ]]; then
     # Main desktop: run CLI directly
     cd "$SCRIPT_DIR"/cli
+
+    CACHE_DIR="$HOME/.cache/rlocal/wacli"
+    CACHE_FILE="$CACHE_DIR/build_sha"
+    mkdir -p "$CACHE_DIR"
+
+    CURRENT_SHA=$(git rev-parse HEAD)
+    CACHED_SHA=$(cat "$CACHE_FILE" 2>/dev/null || echo "")
+
+    if [ "$CURRENT_SHA" != "$CACHED_SHA" ]; then
+        echo "Build cache miss, rebuilding..."
+        go build
+        echo "$CURRENT_SHA" > "$CACHE_FILE"
+    fi
+
     exec ./wacli
 else
     # Other machines: forward local socket to main machine via SSH
