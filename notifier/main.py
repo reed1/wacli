@@ -15,6 +15,7 @@ def send_attention():
             {
                 "id": ATTENTION_ID,
                 "command": ["toggle-window", "show", "wacli-tui"],
+                "dismiss_on_window_class": "wacli-tui",
             }
         )
         sock.send(f"add_attention_by_cmd {payload}".encode())
