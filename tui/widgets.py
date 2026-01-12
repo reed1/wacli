@@ -69,3 +69,34 @@ class ComposeInput(Input):
 
     def action_cancel(self) -> None:
         self.app.hide_compose()
+
+
+class MessageModal(Static):
+    DEFAULT_CSS = """
+    MessageModal {
+        display: none;
+        width: 80%;
+        max-height: 80%;
+        padding: 1 2;
+        border: tall $primary;
+        background: $surface;
+        overflow-y: auto;
+    }
+    MessageModal.visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        Binding("q", "dismiss", "Close", show=False),
+    ]
+
+    app: "WaCLIApp"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.can_focus = True
+
+    def action_dismiss(self) -> None:
+        self.app.hide_message_modal()

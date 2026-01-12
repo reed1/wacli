@@ -7,6 +7,17 @@ WhatsApp message watcher with terminal UI.
 - `cli/` - Go application built on [whatsmeow](https://github.com/tulir/whatsmeow) that connects to WhatsApp, stores messages to SQLite, and exposes a Unix socket for real-time updates
 - `tui/` - Python Textual application that displays messages from the database with j/k navigation and live updates via socket
 
+## TUI Keybindings
+
+- `j/k` - Navigate up/down
+- `g/G` - Jump to first/last message
+- `Ctrl+d/Ctrl+u` - Half page down/up
+- `H` - View full message in modal (Esc/q to dismiss)
+- `y` - Copy message to clipboard
+- `r` - Reply to message
+- `Enter` - Send message to chat
+- `q` - Quit
+
 ## Configuration
 
 Copy `cli/.env.example` to `cli/.env`:

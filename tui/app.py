@@ -8,7 +8,7 @@ from textual.widgets import Footer, Header, Input
 
 from tui.models import Call, Entry, Message
 from tui.utils import SOCKET_PATH, log
-from tui.widgets import ComposeInput, EntryWidget, MessageList
+from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal
 
 
 class WaCLIApp(App):
@@ -26,6 +26,9 @@ class WaCLIApp(App):
         layer: above;
         width: 80%;
     }
+    MessageModal {
+        layer: above;
+    }
     """
 
     BINDINGS = [
@@ -39,6 +42,7 @@ class WaCLIApp(App):
         Binding("enter", "compose_send", "Send", show=False),
         Binding("r", "compose_reply", "Reply"),
         Binding("y", "copy_message", "Copy"),
+        Binding("H", "show_message", "View"),
     ]
 
     HALF_PAGE = 15
@@ -54,6 +58,7 @@ class WaCLIApp(App):
         yield Header()
         yield MessageList()
         yield ComposeInput(placeholder="Type your message...")
+        yield MessageModal()
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -281,3 +286,16 @@ class WaCLIApp(App):
         self.socket_writer.write((json.dumps(payload) + "\n").encode())
         await self.socket_writer.drain()
         self.hide_compose()
+
+    def action_show_message(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        modal = self.query_one(MessageModal)
+        modal.update(entry.text)
+        modal.add_class("visible")
+        modal.focus()
+
+    def hide_message_modal(self) -> None:
+        modal = self.query_one(MessageModal)
+        modal.remove_class("visible")
