@@ -98,7 +98,7 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
-        reader, writer = await asyncio.open_unix_connection(SOCKET_PATH)
+        reader, writer = await asyncio.open_unix_connection(SOCKET_PATH, limit=1024 * 1024)
         self.socket_writer = writer
         log("listen_socket: connected, requesting entries")
         writer.write(b'{"action":"get_entries"}\n')
