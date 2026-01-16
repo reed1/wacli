@@ -219,10 +219,18 @@ func (a *App) startSocketServer() (net.Listener, error) {
 
 type SocketCommand struct {
 	Action    string `json:"action"`
+	RequestID string `json:"request_id"`
 	ChatJID   string `json:"chat_jid"`
 	MessageID string `json:"message_id"`
 	SenderJID string `json:"sender_jid"`
 	Text      string `json:"text"`
+}
+
+type SocketResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
 }
 
 func (a *App) handleSocketConn(conn net.Conn) {
@@ -248,13 +256,17 @@ func (a *App) handleSocketConn(conn net.Conn) {
 
 		switch cmd.Action {
 		case "send":
-			if err := a.sendMessage(cmd.ChatJID, cmd.Text); err != nil {
+			err := a.sendMessage(cmd.ChatJID, cmd.Text)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send message: %v\n", err)
 			}
+			a.sendResponse(conn, cmd.RequestID, err)
 		case "reply":
-			if err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text); err != nil {
+			err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
 			}
+			a.sendResponse(conn, cmd.RequestID, err)
 		case "get_entries":
 			if err := a.sendEntries(conn); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send entries: %v\n", err)
@@ -263,6 +275,23 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
 	}
+}
+
+func (a *App) sendResponse(conn net.Conn, requestID string, err error) {
+	resp := SocketResponse{
+		Type:      "response",
+		RequestID: requestID,
+		Success:   err == nil,
+	}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		return
+	}
+	data = append(data, '\n')
+	conn.Write(data)
 }
 
 type SocketEvent struct {

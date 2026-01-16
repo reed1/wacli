@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 
 import pyperclip
 from textual.app import App, ComposeResult
@@ -53,6 +54,7 @@ class WaCLIApp(App):
         self.selected_index: int = -1
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
+        self.pending_request_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -110,6 +112,17 @@ class WaCLIApp(App):
                 raise ConnectionError("Socket connection closed")
             event = json.loads(line.decode())
             entry_type = event["type"]
+
+            if entry_type == "response":
+                request_id = event["request_id"]
+                if request_id == self.pending_request_id:
+                    self.pending_request_id = None
+                    if event["success"]:
+                        self.hide_compose()
+                    else:
+                        self.exit(return_code=1, message=f"Send failed: {event.get('error', 'unknown error')}")
+                continue
+
             data = event["data"]
             if entry_type == "entries":
                 self.load_entries_from_data(data)
@@ -260,19 +273,23 @@ class WaCLIApp(App):
             return
 
         if not self.socket_writer:
-            self.notify("Not connected to socket", severity="error")
-            self.hide_compose()
+            self.exit(return_code=1, message="Not connected to socket")
             return
+
+        request_id = str(uuid.uuid4())
+        self.pending_request_id = request_id
 
         if self.compose_mode == "send":
             payload = {
                 "action": "send",
+                "request_id": request_id,
                 "chat_jid": entry.chat_jid,
                 "text": text,
             }
         elif self.compose_mode == "reply":
             payload = {
                 "action": "reply",
+                "request_id": request_id,
                 "chat_jid": entry.chat_jid,
                 "message_id": entry.message_id,
                 "sender_jid": entry.sender_jid,
@@ -285,7 +302,6 @@ class WaCLIApp(App):
         log(f"Sending: {payload}")
         self.socket_writer.write((json.dumps(payload) + "\n").encode())
         await self.socket_writer.drain()
-        self.hide_compose()
 
     def action_show_message(self) -> None:
         entry = self.get_selected_entry()
