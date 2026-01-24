@@ -14,6 +14,7 @@ class Message:
     is_group: bool
     is_muted: bool
     is_reply_to_me: bool
+    message_type: str
     text: str
 
     @property

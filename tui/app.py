@@ -153,6 +153,7 @@ class WaCLIApp(App):
                     is_group=data["is_group"],
                     is_muted=data["is_muted"],
                     is_reply_to_me=data["is_reply_to_me"],
+                    message_type=data.get("message_type", ""),
                     text=data["text"],
                 )
                 log(f"listen_socket: parsed message: {entry.text}")
@@ -181,6 +182,7 @@ class WaCLIApp(App):
                     is_group=msg["is_group"],
                     is_muted=msg["is_muted"],
                     is_reply_to_me=msg["is_reply_to_me"],
+                    message_type=msg.get("message_type", ""),
                     text=msg["text"],
                 )
             )

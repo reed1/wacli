@@ -23,6 +23,7 @@ type Message struct {
 	IsGroup     bool   `json:"is_group"`
 	IsMuted     bool   `json:"is_muted"`
 	IsReplyToMe bool   `json:"is_reply_to_me"`
+	MessageType string `json:"message_type"`
 	Text        string `json:"text"`
 }
 
@@ -50,11 +51,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		return
 	}
 
-	text := extractText(msg.Message)
-	if text == "" {
-		text = "[Media/Other]"
-	}
-
+	msgType, text := extractMessage(msg.Message)
 	senderName := a.getSenderName(msg)
 	chatName := a.getChatName(msg)
 
@@ -68,6 +65,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		IsGroup:     msg.Info.IsGroup,
 		IsMuted:     isMuted,
 		IsReplyToMe: isReplyToMe,
+		MessageType: msgType,
 		Text:        text,
 	}
 
@@ -209,49 +207,6 @@ func getContextInfo(msg *waE2E.Message) *waE2E.ContextInfo {
 		return sticker.GetContextInfo()
 	}
 	return nil
-}
-
-func extractText(msg *waE2E.Message) string {
-	if msg == nil {
-		return ""
-	}
-	if text := msg.GetConversation(); text != "" {
-		return text
-	}
-	if ext := msg.GetExtendedTextMessage(); ext != nil {
-		return ext.GetText()
-	}
-	if img := msg.GetImageMessage(); img != nil {
-		if cap := img.GetCaption(); cap != "" {
-			return "[Image] " + cap
-		}
-		return "[Image]"
-	}
-	if vid := msg.GetVideoMessage(); vid != nil {
-		if cap := vid.GetCaption(); cap != "" {
-			return "[Video] " + cap
-		}
-		return "[Video]"
-	}
-	if doc := msg.GetDocumentMessage(); doc != nil {
-		return "[Document] " + doc.GetFileName()
-	}
-	if audio := msg.GetAudioMessage(); audio != nil {
-		if audio.GetPTT() {
-			return "[Voice Message]"
-		}
-		return "[Audio]"
-	}
-	if sticker := msg.GetStickerMessage(); sticker != nil {
-		return "[Sticker]"
-	}
-	if contact := msg.GetContactMessage(); contact != nil {
-		return "[Contact] " + contact.GetDisplayName()
-	}
-	if loc := msg.GetLocationMessage(); loc != nil {
-		return "[Location]"
-	}
-	return ""
 }
 
 func (a *App) getSenderName(msg *events.Message) string {

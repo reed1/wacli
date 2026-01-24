@@ -34,11 +34,15 @@ class EntryWidget(Static):
         if isinstance(self.entry, Message):
             msg = self.entry
             text_oneline = msg.text.replace("\n", " ")
+            if msg.message_type:
+                content = f"[dim]\\[{msg.message_type}][/] {text_oneline}"
+            else:
+                content = text_oneline
             if msg.is_group:
                 title = f"{msg.title} [bold magenta]👥[/] [magenta]{msg.chat_name}[/]"
             else:
                 title = msg.title
-            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {text_oneline}"
+            return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {content}"
         call = self.entry
         return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {call.title}[/]: Incoming call"
 

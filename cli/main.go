@@ -14,8 +14,8 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
-	"github.com/mdp/qrterminal/v3"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -171,6 +171,7 @@ func initMessageDB() (*sql.DB, error) {
 			is_group INTEGER NOT NULL,
 			is_muted INTEGER NOT NULL,
 			is_reply_to_me INTEGER NOT NULL,
+			message_type TEXT NOT NULL DEFAULT '',
 			text TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
@@ -337,7 +338,7 @@ type EntriesData struct {
 }
 
 func (a *App) sendEntries(conn net.Conn) error {
-	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, text FROM messages ORDER BY timestamp")
+	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text FROM messages ORDER BY timestamp")
 	if err != nil {
 		return err
 	}
@@ -347,7 +348,7 @@ func (a *App) sendEntries(conn net.Conn) error {
 	for rows.Next() {
 		var msg Message
 		var isGroup, isMuted, isReplyToMe int
-		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.Text); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text); err != nil {
 			return err
 		}
 		msg.IsGroup = isGroup != 0
@@ -483,4 +484,3 @@ func buildInsertParams(record interface{}) (columns []string, placeholders []str
 	}
 	return
 }
-
