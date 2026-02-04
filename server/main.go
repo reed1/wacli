@@ -192,6 +192,11 @@ func initMessageDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec("VACUUM")
+	if err != nil {
+		return nil, err
+	}
+
 	return db, nil
 }
 
