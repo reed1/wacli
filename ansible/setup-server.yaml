@@ -27,6 +27,12 @@
         dest: "{{ app_dir }}/server/.env"
         mode: "0600"
 
+    - name: Deploy transcribe script
+      ansible.builtin.template:
+        src: transcribe.sh.j2
+        dest: "{{ app_dir }}/server/transcribe.sh"
+        mode: "0755"
+
     - name: Build Go binary
       ansible.builtin.command:
         cmd: go build

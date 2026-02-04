@@ -7,3 +7,4 @@ all:
       listen_addr: "100.97.165.105:3010"
       app_dir: "{{ home_dir }}/app/wacli"
       transcription_script: "{{ app_dir }}/server/transcribe.sh"
+      groq_api_key: "{{ lookup('pipe', 'rpass get personal/groq/apikey') }}"

@@ -1,0 +1,25 @@
+#!/bin/bash
+if [ -z "$1" ]; then
+    echo "Usage: $0 <audio_file> [contact_number]" >&2
+    exit 1
+fi
+
+AUDIO_FILE="$1"
+CONTACT_NUMBER="$2"
+GROQ_API_KEY="{{ groq_api_key }}"
+DEFAULT_LANGUAGE=id
+
+response=$(curl -s "https://api.groq.com/openai/v1/audio/transcriptions" \
+  -H "Authorization: Bearer $GROQ_API_KEY" \
+  -F "file=@$AUDIO_FILE" \
+  -F "model=whisper-large-v3-turbo" \
+  -F "language=$DEFAULT_LANGUAGE")
+
+text=$(echo "$response" | jq -r '.text // empty')
+
+if [ -n "$text" ]; then
+    echo "Automated Transcription: $text"
+else
+    echo "Error: $response" >&2
+    exit 1
+fi
