@@ -5,9 +5,7 @@
     ansible_user: reed
     ansible_become_pass: "{{ lookup('pipe', 'rpass get personal/hosts/sgtent/ssh') }}"
     home_dir: /home/{{ ansible_user }}
-    wacli_dir: "{{ home_dir }}/app/wacli"
     repo_url: git@github.com:reed1/wacli.git
-    listen_addr: "100.97.165.105:3010"
 
   tasks:
     - name: Install Go
@@ -19,20 +17,20 @@
     - name: Clone wacli repository
       ansible.builtin.git:
         repo: "{{ repo_url }}"
-        dest: "{{ wacli_dir }}"
+        dest: "{{ app_dir }}"
         version: main
         accept_hostkey: true
 
     - name: Build Go binary
       ansible.builtin.command:
         cmd: go build
-        chdir: "{{ wacli_dir }}/server"
-        creates: "{{ wacli_dir }}/server/wacli"
+        chdir: "{{ app_dir }}/server"
+        creates: "{{ app_dir }}/server/wacli"
 
     - name: Deploy .env file
       ansible.builtin.template:
         src: env.j2
-        dest: "{{ wacli_dir }}/server/.env"
+        dest: "{{ app_dir }}/server/.env"
         mode: "0600"
 
     - name: Create systemd user directory

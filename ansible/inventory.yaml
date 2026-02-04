@@ -1,0 +1,9 @@
+all:
+  hosts:
+    sgtent:
+      ansible_host: sgtent
+      ansible_user: reed
+
+      listen_addr: "100.97.165.105:3010"
+      app_dir: "{{ home_dir }}/app/wacli"
+      transcription_script: "{{ app_dir }}/server/transcribe.sh"

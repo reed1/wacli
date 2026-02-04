@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory={{ wacli_dir }}/server
-ExecStart={{ wacli_dir }}/server/wacli
+WorkingDirectory={{ app_dir }}/server
+ExecStart={{ app_dir }}/server/wacli
 Restart=always
 RestartSec=5
 
