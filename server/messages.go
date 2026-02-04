@@ -52,6 +52,11 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	msgType, text := extractMessage(msg.Message)
+
+	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() {
+		go a.handleVoiceMessage(msg, audio)
+	}
+
 	senderName := a.getSenderName(msg)
 	chatName := a.getChatName(msg)
 

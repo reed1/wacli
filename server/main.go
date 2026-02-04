@@ -34,6 +34,8 @@ type Config struct {
 	ListenAddr            string
 	IncludeStatusMessages bool
 	IncludeMutedMessages  bool
+	VoiceMessageDir       string
+	TranscriptionScript   string
 }
 
 type App struct {
@@ -58,6 +60,8 @@ func loadConfig() Config {
 		ListenAddr:            listenAddr,
 		IncludeStatusMessages: os.Getenv("INCLUDE_STATUS_MESSAGES") == "true",
 		IncludeMutedMessages:  os.Getenv("INCLUDE_MUTED_MESSAGES") == "true",
+		VoiceMessageDir:       os.Getenv("VOICE_MESSAGE_DIR"),
+		TranscriptionScript:   os.Getenv("TRANSCRIPTION_SCRIPT"),
 	}
 }
 
