@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import socket
 import sys
 import time
+from pathlib import Path
 
-SERVER_ADDR = ("100.97.165.105", 3010)
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+SERVER_ADDR = (os.environ["SERVER_HOST"], int(os.environ["SERVER_PORT"]))
 RWORKSPACES_SOCKET = "/tmp/rlocal/rworkspaces/sock"
 ATTENTION_ID = "wacli"
 
