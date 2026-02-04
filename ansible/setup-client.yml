@@ -1,20 +1,23 @@
 - name: Setup wacli notifier
   hosts: localhost
   connection: local
+  gather_facts: false
   vars:
-    wacli_dir: "{{ ansible_env.HOME }}/proj/wacli"
+    ansible_user: reed
+    home_dir: /home/{{ ansible_user }}
+    wacli_dir: "{{ home_dir }}/proj/wacli"
 
   tasks:
     - name: Create systemd user directory
       ansible.builtin.file:
-        path: "{{ ansible_env.HOME }}/.config/systemd/user"
+        path: "{{ home_dir }}/.config/systemd/user"
         state: directory
         mode: "0755"
 
     - name: Install wacli-notifier service
       ansible.builtin.template:
         src: wacli-notifier.service.j2
-        dest: "{{ ansible_env.HOME }}/.config/systemd/user/wacli-notifier.service"
+        dest: "{{ home_dir }}/.config/systemd/user/wacli-notifier.service"
         mode: "0644"
 
     - name: Reload systemd user daemon
