@@ -104,11 +104,12 @@ func main() {
 
 	client.AddEventHandler(app.handleEvent)
 
-	if command == "daemon" {
+	switch command {
+	case "daemon":
 		runDaemon(app)
-	} else if command == "login" {
+	case "login":
 		runLogin(app)
-	} else {
+	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		fmt.Fprintf(os.Stderr, "Usage: wacli [daemon|login]\n")
 		os.Exit(1)
