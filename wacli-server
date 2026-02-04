@@ -8,7 +8,7 @@ MAIN_MACHINE="rdzero"
 
 if [[ "$(hostname)" == "$MAIN_MACHINE" ]]; then
     # Main desktop: run CLI directly
-    cd "$SCRIPT_DIR"/cli
+    cd "$SCRIPT_DIR"/server
 
     CACHE_DIR="$HOME/.cache/rlocal/wacli"
     CACHE_FILE="$CACHE_DIR/build_sha"
