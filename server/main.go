@@ -26,13 +26,12 @@ import (
 )
 
 const (
-	runtimeDir  = "/tmp/rlocal/wacli"
-	socketPath  = runtimeDir + "/wacli.sock"
 	maxMessages = 200
 	trimToCount = 150
 )
 
 type Config struct {
+	ListenAddr            string
 	IncludeStatusMessages bool
 	IncludeMutedMessages  bool
 }
@@ -49,7 +48,14 @@ type App struct {
 func loadConfig() Config {
 	godotenv.Load()
 
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		fmt.Fprintln(os.Stderr, "LISTEN_ADDR is required in .env")
+		os.Exit(1)
+	}
+
 	return Config{
+		ListenAddr:            listenAddr,
 		IncludeStatusMessages: os.Getenv("INCLUDE_STATUS_MESSAGES") == "true",
 		IncludeMutedMessages:  os.Getenv("INCLUDE_MUTED_MESSAGES") == "true",
 	}
@@ -121,7 +127,6 @@ func runDaemon(app *App) {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	defer os.Remove(socketPath)
 
 	if err := app.client.Connect(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
@@ -129,7 +134,7 @@ func runDaemon(app *App) {
 	}
 
 	fmt.Println("Connected. Watching for messages...")
-	fmt.Printf("Socket server listening on %s\n", socketPath)
+	fmt.Printf("TCP server listening on %s\n", app.config.ListenAddr)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -201,11 +206,7 @@ func initMessageDB() (*sql.DB, error) {
 }
 
 func (a *App) startSocketServer() (net.Listener, error) {
-	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
-		return nil, err
-	}
-	os.Remove(socketPath)
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := net.Listen("tcp", a.config.ListenAddr)
 	if err != nil {
 		return nil, err
 	}

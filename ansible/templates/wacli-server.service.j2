@@ -1,0 +1,14 @@
+[Unit]
+Description=Wacli WhatsApp Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ wacli_dir }}/server
+ExecStart={{ wacli_dir }}/server/wacli
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

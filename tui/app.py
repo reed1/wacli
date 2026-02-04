@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
 
 from tui.models import Call, Entry, Message
-from tui.utils import SOCKET_PATH, log
+from tui.utils import SERVER_ADDR, log
 from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal
 
 
@@ -100,7 +100,7 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
-        reader, writer = await asyncio.open_unix_connection(SOCKET_PATH, limit=1024 * 1024)
+        reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=1024 * 1024)
         self.socket_writer = writer
         log("listen_socket: connected, requesting entries")
         writer.write(b'{"action":"get_entries"}\n')

@@ -5,22 +5,22 @@ import socket
 import sys
 import time
 
-WACLI_SOCKET = "/tmp/rlocal/wacli/wacli.sock"
+SERVER_ADDR = ("100.97.165.105", 3010)
 RWORKSPACES_SOCKET = "/tmp/rlocal/rworkspaces/sock"
 ATTENTION_ID = "wacli"
 
 
-def wait_for_socket():
+def wait_for_server():
     delays = [1, 2, 4, 8]
     for delay in delays:
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.connect(WACLI_SOCKET)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(SERVER_ADDR)
                 return True
-        except (FileNotFoundError, ConnectionRefusedError):
-            print(f"Socket not ready, waiting {delay}s...")
+        except (ConnectionRefusedError, OSError):
+            print(f"Server not ready, waiting {delay}s...")
             time.sleep(delay)
-    print("Socket not ready after all retries, exiting")
+    print("Server not ready after all retries, exiting")
     sys.exit(1)
 
 
@@ -39,10 +39,10 @@ def send_attention():
 
 
 def main():
-    wait_for_socket()
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.connect(WACLI_SOCKET)
-        print("Connected to wacli socket, listening for events...")
+    wait_for_server()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect(SERVER_ADDR)
+        print("Connected to wacli server, listening for events...")
 
         buffer = ""
         while True:

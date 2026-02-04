@@ -1,0 +1,13 @@
+[Unit]
+Description=Wacli Notifier
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ wacli_dir }}/notifier/main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

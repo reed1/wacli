@@ -5,9 +5,9 @@ RUNTIME_DIR = Path("/tmp/rlocal/wacli")
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE = RUNTIME_DIR / "wacli.log"
-SOCKET_PATH = str(RUNTIME_DIR / "wacli.sock")
 
-DB_PATH = Path(__file__).parent.parent / "cli" / "messages.db"
+SERVER_ADDR = ("100.97.165.105", 3010)
+DB_PATH = Path(__file__).parent.parent / "server" / "messages.db"
 
 
 def log(msg: str) -> None:

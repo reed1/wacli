@@ -1,0 +1,56 @@
+- name: Setup wacli server
+  hosts: sgtent
+  vars:
+    wacli_dir: "{{ ansible_env.HOME }}/app/wacli"
+    repo_url: "git@github.com:reednel/wacli.git"
+    listen_addr: "100.97.165.105:3010"
+
+  tasks:
+    - name: Install Go
+      become: true
+      ansible.builtin.apt:
+        name: golang
+        state: present
+
+    - name: Clone wacli repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ wacli_dir }}"
+        version: main
+        accept_hostkey: true
+
+    - name: Build Go binary
+      ansible.builtin.command:
+        cmd: go build
+        chdir: "{{ wacli_dir }}/server"
+        creates: "{{ wacli_dir }}/server/wacli"
+
+    - name: Deploy .env file
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ wacli_dir }}/server/.env"
+        mode: "0600"
+
+    - name: Create systemd user directory
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.config/systemd/user"
+        state: directory
+        mode: "0755"
+
+    - name: Install wacli-server service
+      ansible.builtin.template:
+        src: wacli-server.service.j2
+        dest: "{{ ansible_env.HOME }}/.config/systemd/user/wacli-server.service"
+        mode: "0644"
+
+    - name: Reload systemd user daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+
+    - name: Enable and start wacli-server
+      ansible.builtin.systemd:
+        name: wacli-server
+        enabled: true
+        state: started
+        scope: user
