@@ -2,3 +2,5 @@
 *.db-*
 wacli
 .env
+
+/transcribe.sh
