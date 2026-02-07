@@ -1,7 +1,6 @@
 import re
 from typing import TYPE_CHECKING
 
-from rich.markup import escape
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.widgets import Input, Static
@@ -16,9 +15,9 @@ def render_mentions(text: str) -> str:
     result = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            result.append(escape(part))
+            result.append(part.replace("[", "\\["))
         else:
-            result.append(f"[bold green]@{escape(part)}[/]")
+            result.append(f"[bold green]@{part.replace("[", "\\[")}[/]")
     return "".join(result)
 
 
@@ -57,9 +56,10 @@ class EntryWidget(Static):
                 content = f"[dim]\\[{msg.message_type}][/] {text_oneline}"
             else:
                 content = text_oneline
-            sender = escape(msg.title)
+            # Don't use rich.markup.escape() — it skips uppercase tags like [RUN]
+            sender = msg.title.replace("[", "\\[")
             if msg.is_group:
-                chat = escape(msg.chat_name)
+                chat = msg.chat_name.replace("[", "\\[")
                 title = f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
             else:
                 title = sender
