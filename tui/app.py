@@ -9,7 +9,7 @@ from textual.widgets import Footer, Header, Input
 
 from tui.models import Call, Entry, Message
 from tui.utils import SERVER_ADDR, log
-from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal
+from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal, render_mentions, strip_mentions
 
 
 class WaCLIApp(App):
@@ -225,7 +225,7 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
-        pyperclip.copy(entry.text)
+        pyperclip.copy(strip_mentions(entry.text))
         self.notify("Copied to clipboard")
 
     def get_selected_entry(self) -> Entry | None:
@@ -310,7 +310,7 @@ class WaCLIApp(App):
         if not entry or isinstance(entry, Call):
             return
         modal = self.query_one(MessageModal)
-        modal.update(entry.text)
+        modal.update(render_mentions(entry.text))
         modal.add_class("visible")
         modal.focus()
 

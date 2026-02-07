@@ -12,6 +12,73 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+func (a *App) resolveName(jidStr string) string {
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return "Unknown Contact"
+	}
+
+	contact, err := a.client.Store.Contacts.GetContact(a.ctx, jid)
+	if err == nil && contact.Found {
+		if contact.PushName != "" {
+			return contact.PushName
+		}
+		if contact.FullName != "" {
+			return contact.FullName
+		}
+	}
+
+	if jid.Server == "lid" {
+		var pn string
+		err := a.waDB.QueryRow("SELECT pn FROM whatsmeow_lid_map WHERE lid = ?", jidStr).Scan(&pn)
+		if err == nil && pn != "" {
+			phoneJID, err := types.ParseJID(pn)
+			if err == nil {
+				contact, err := a.client.Store.Contacts.GetContact(a.ctx, phoneJID)
+				if err == nil && contact.Found {
+					if contact.PushName != "" {
+						return contact.PushName
+					}
+					if contact.FullName != "" {
+						return contact.FullName
+					}
+				}
+			}
+		}
+	}
+
+	return "Unknown Contact"
+}
+
+func (a *App) resolveMentions(text string, msg *waE2E.Message) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = text
+		}
+	}()
+
+	ctx := getContextInfo(msg)
+	if ctx == nil {
+		return text
+	}
+
+	mentionedJIDs := ctx.GetMentionedJID()
+	if len(mentionedJIDs) == 0 {
+		return text
+	}
+
+	result = text
+	for _, jidStr := range mentionedJIDs {
+		jid, err := types.ParseJID(jidStr)
+		if err != nil {
+			continue
+		}
+		name := a.resolveName(jidStr)
+		result = strings.ReplaceAll(result, "@"+jid.User, fmt.Sprintf(`<mention jid="%s" name="%s"/>`, jidStr, name))
+	}
+	return result
+}
+
 type Message struct {
 	ID          int64  `json:"id"`
 	MessageID   string `json:"message_id"`
@@ -52,6 +119,7 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	msgType, text := extractMessage(msg.Message)
+	text = a.resolveMentions(text, msg.Message)
 
 	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() {
 		go a.handleVoiceMessage(msg, audio)

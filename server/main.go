@@ -42,6 +42,7 @@ type App struct {
 	client      *whatsmeow.Client
 	ctx         context.Context
 	msgDB       *sql.DB
+	waDB        *sql.DB
 	config      Config
 	socketConns map[net.Conn]struct{}
 	connMu      sync.RWMutex
@@ -81,6 +82,13 @@ func main() {
 	}
 	defer msgDB.Close()
 
+	waDB, err := sql.Open("sqlite3", "file:wacli.db?_foreign_keys=on&mode=ro")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open wacli.db: %v\n", err)
+		os.Exit(1)
+	}
+	defer waDB.Close()
+
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 	container, err := sqlstore.New(ctx, "sqlite3", "file:wacli.db?_foreign_keys=on", dbLog)
 	if err != nil {
@@ -102,6 +110,7 @@ func main() {
 		client:      client,
 		ctx:         ctx,
 		msgDB:       msgDB,
+		waDB:        waDB,
 		config:      config,
 		socketConns: make(map[net.Conn]struct{}),
 	}

@@ -1,10 +1,29 @@
+import re
 from typing import TYPE_CHECKING
 
+from rich.markup import escape
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.widgets import Input, Static
 
 from tui.models import Call, Entry, Message
+
+MENTION_RE = re.compile(r'<mention jid="[^"]*" name="([^"]*)"/>')
+
+
+def render_mentions(text: str) -> str:
+    parts = MENTION_RE.split(text)
+    result = []
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            result.append(escape(part))
+        else:
+            result.append(f"[bold green]@{escape(part)}[/]")
+    return "".join(result)
+
+
+def strip_mentions(text: str) -> str:
+    return MENTION_RE.sub(r"@\1", text)
 
 if TYPE_CHECKING:
     from tui.app import WaCLIApp
@@ -33,15 +52,17 @@ class EntryWidget(Static):
         indicator = ">" if self.has_class("selected") else " "
         if isinstance(self.entry, Message):
             msg = self.entry
-            text_oneline = msg.text.replace("\n", " ")
+            text_oneline = render_mentions(msg.text.replace("\n", " "))
             if msg.message_type:
                 content = f"[dim]\\[{msg.message_type}][/] {text_oneline}"
             else:
                 content = text_oneline
+            sender = escape(msg.title)
             if msg.is_group:
-                title = f"{msg.title} [bold magenta]👥[/] [magenta]{msg.chat_name}[/]"
+                chat = escape(msg.chat_name)
+                title = f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
             else:
-                title = msg.title
+                title = sender
             return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {content}"
         call = self.entry
         return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {call.title}[/]: Incoming call"
