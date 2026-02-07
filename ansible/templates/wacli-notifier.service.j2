@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart={{ wacli_dir }}/notifier/main.py
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
