@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 import uuid
 
 import pyperclip
@@ -8,8 +9,8 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
 
 from tui.models import Call, Entry, Message
-from tui.utils import SERVER_ADDR, log
-from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal, render_mentions, strip_mentions
+from tui.utils import RUNTIME_DIR, SERVER_ADDR, log
+from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal, format_entry_plain, render_mentions, strip_mentions
 
 
 class WaCLIApp(App):
@@ -44,6 +45,7 @@ class WaCLIApp(App):
         Binding("r", "compose_reply", "Reply"),
         Binding("y", "copy_message", "Copy"),
         Binding("H", "show_message", "View"),
+        Binding("slash", "search_nvim", "Search"),
     ]
 
     HALF_PAGE = 15
@@ -304,6 +306,16 @@ class WaCLIApp(App):
         log(f"Sending: {payload}")
         self.socket_writer.write((json.dumps(payload) + "\n").encode())
         await self.socket_writer.drain()
+
+    def action_search_nvim(self) -> None:
+        if not self.entries:
+            return
+        tmp = RUNTIME_DIR / "messages.txt"
+        with open(tmp, "w") as f:
+            for entry in self.entries:
+                f.write(format_entry_plain(entry) + "\n")
+        with self.suspend():
+            subprocess.run(["nvim", "+$", "+call feedkeys('?')", str(tmp)])
 
     def action_show_message(self) -> None:
         entry = self.get_selected_entry()
