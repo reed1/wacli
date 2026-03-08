@@ -1,16 +1,29 @@
 import asyncio
 import json
+import re
 import subprocess
 import uuid
+
+from collections import namedtuple
 
 import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
 
+ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
+
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log
-from tui.widgets import ComposeInput, EntryWidget, MessageList, MessageModal, format_entry_plain, render_mentions, strip_mentions
+from tui.widgets import (
+    ComposeInput,
+    EntryWidget,
+    MessageList,
+    MessageModal,
+    format_entry_plain,
+    render_mentions,
+    strip_mentions,
+)
 
 
 class WaCLIApp(App):
@@ -37,7 +50,6 @@ class WaCLIApp(App):
         Binding("q", "quit", "Quit"),
         Binding("j", "select_next", "Down", show=False),
         Binding("k", "select_prev", "Up", show=False),
-        Binding("g", "select_first", "Top", show=False),
         Binding("G", "select_last", "Bottom", show=False),
         Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
         Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
@@ -49,6 +61,11 @@ class WaCLIApp(App):
     ]
 
     HALF_PAGE = 15
+    CHORD_TIMEOUT = 1.0
+    CHORD_BINDINGS = [
+        ChordBinding("gg", "select_first", "Top"),
+        ChordBinding("gx", "open_url", "Open URL"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -57,6 +74,14 @@ class WaCLIApp(App):
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
         self.pending_request_id: str | None = None
+        self._chord_buf: str = ""
+        self._chord_timer: asyncio.TimerHandle | None = None
+        self._chord_prefixes: set[str] = set()
+        self._chord_map: dict[str, str] = {}
+        for cb in self.CHORD_BINDINGS:
+            self._chord_map[cb.keys] = cb.action
+            for i in range(1, len(cb.keys)):
+                self._chord_prefixes.add(cb.keys[:i])
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -211,6 +236,32 @@ class WaCLIApp(App):
     def action_select_prev(self) -> None:
         self.update_selection(self.selected_index - 1)
 
+    def _reset_chord(self) -> None:
+        if self._chord_timer is not None:
+            self._chord_timer.cancel()
+            self._chord_timer = None
+        self._chord_buf = ""
+
+    def on_key(self, event) -> None:
+        candidate = self._chord_buf + event.key
+        if candidate in self._chord_map:
+            action = self._chord_map[candidate]
+            self._reset_chord()
+            event.prevent_default()
+            event.stop()
+            getattr(self, f"action_{action}")()
+            return
+        if candidate in self._chord_prefixes:
+            self._reset_chord()
+            event.prevent_default()
+            event.stop()
+            self._chord_buf = candidate
+            loop = asyncio.get_event_loop()
+            self._chord_timer = loop.call_later(self.CHORD_TIMEOUT, self._reset_chord)
+            return
+        if self._chord_buf:
+            self._reset_chord()
+
     def action_select_first(self) -> None:
         self.update_selection(0)
 
@@ -229,6 +280,18 @@ class WaCLIApp(App):
             return
         pyperclip.copy(strip_mentions(entry.text))
         self.notify("Copied to clipboard")
+
+    def action_open_url(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        urls = re.findall(r"https?://[^\s<>\[\]]+", strip_mentions(entry.text))
+        if not urls:
+            self.notify("No URL found")
+            return
+        for url in urls:
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.notify(f"Opened {len(urls)} URL(s)")
 
     def get_selected_entry(self) -> Entry | None:
         if 0 <= self.selected_index < len(self.entries):
