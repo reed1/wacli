@@ -9,7 +9,7 @@ from collections import namedtuple
 import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Input
+from textual.widgets import Footer, Header
 
 ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 
@@ -17,6 +17,7 @@ from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log
 from tui.widgets import (
     ComposeInput,
+    ComposeQuote,
     EntryWidget,
     MessageList,
     MessageModal,
@@ -36,6 +37,10 @@ class WaCLIApp(App):
         height: 1fr;
         width: 100%;
         scrollbar-gutter: stable;
+    }
+    ComposeQuote {
+        layer: above;
+        width: 80%;
     }
     ComposeInput {
         layer: above;
@@ -86,7 +91,8 @@ class WaCLIApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield MessageList()
-        yield ComposeInput(placeholder="Type your message...")
+        yield ComposeQuote()
+        yield ComposeInput()
         yield MessageModal()
         yield Footer()
 
@@ -306,7 +312,7 @@ class WaCLIApp(App):
             return
         self.compose_mode = "send"
         compose_input = self.query_one(ComposeInput)
-        compose_input.placeholder = f"Message to {entry.chat_name}..."
+        compose_input.border_title = f"Message to {entry.chat_name}"
         compose_input.add_class("visible")
         compose_input.focus()
 
@@ -317,19 +323,26 @@ class WaCLIApp(App):
         if isinstance(entry, Call):
             return
         self.compose_mode = "reply"
+        quote = self.query_one(ComposeQuote)
+        quote.border_title = "Quote"
+        quote_text = strip_mentions(entry.text).replace("\n", " ").replace("[", "\\[")
+        quote.update(quote_text)
+        quote.add_class("visible")
         compose_input = self.query_one(ComposeInput)
-        compose_input.placeholder = f"Reply to {entry.sender_name}..."
+        compose_input.border_title = f"Reply to {entry.sender_name}"
         compose_input.add_class("visible")
         compose_input.focus()
 
     def hide_compose(self) -> None:
         compose_input = self.query_one(ComposeInput)
-        compose_input.value = ""
+        compose_input.clear()
         compose_input.remove_class("visible")
+        self.query_one(ComposeQuote).remove_class("visible")
         self.compose_mode = None
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+    async def submit_compose(self) -> None:
+        compose_input = self.query_one(ComposeInput)
+        text = compose_input.text.strip()
         if not text:
             self.hide_compose()
             return

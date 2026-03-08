@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
-from textual.widgets import Input, Static
+from textual.widgets import Static, TextArea
 
 from tui.models import Call, Entry, Message
 
@@ -33,6 +33,7 @@ def format_entry_plain(entry: "Entry") -> str:
             return f"[{entry.formatted_time}] {entry.title} | {entry.chat_name}: {type_prefix}{text}"
         return f"[{entry.formatted_time}] {entry.title}: {type_prefix}{text}"
     return f"[{entry.formatted_time}] {entry.title}: Incoming call"
+
 
 if TYPE_CHECKING:
     from tui.app import WaCLIApp
@@ -82,12 +83,33 @@ class MessageList(ScrollableContainer):
     pass
 
 
-class ComposeInput(Input):
+class ComposeQuote(Static):
+    DEFAULT_CSS = """
+    ComposeQuote {
+        display: none;
+        width: 60%;
+        height: auto;
+        padding: 0 1;
+        color: $text;
+        background: $surface;
+        border: tall $accent;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
+    }
+    ComposeQuote.visible {
+        display: block;
+    }
+    """
+
+
+class ComposeInput(TextArea):
     DEFAULT_CSS = """
     ComposeInput {
         display: none;
         width: 60%;
         height: auto;
+        max-height: 12;
         border: tall $primary;
         background: $surface;
     }
@@ -101,6 +123,20 @@ class ComposeInput(Input):
     ]
 
     app: "WaCLIApp"
+
+    async def _on_key(self, event) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            await self.app.submit_compose()
+            return
+        if event.key == "ctrl+j":
+            event.stop()
+            event.prevent_default()
+            start, end = self.selection
+            self._replace_via_keyboard("\n", start, end)
+            return
+        await super()._on_key(event)
 
     def action_cancel(self) -> None:
         self.app.hide_compose()
