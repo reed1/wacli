@@ -14,7 +14,7 @@ from textual.widgets import Footer, Header
 ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 
 from tui.models import Call, Entry, Message
-from tui.utils import RUNTIME_DIR, SERVER_ADDR, log
+from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
 from tui.widgets import (
     ComposeInput,
     ComposeQuote,
@@ -380,6 +380,7 @@ class WaCLIApp(App):
             return
 
         log(f"Sending: {payload}")
+        log_submitted_message(payload["chat_jid"], text, payload["action"])
         self.socket_writer.write((json.dumps(payload) + "\n").encode())
         await self.socket_writer.drain()
 
