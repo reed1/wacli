@@ -108,7 +108,7 @@ func (a *App) saveCall(call *Call) error {
 		return err
 	}
 
-	if count > maxMessages {
+	if count > maxEntries {
 		_, err = a.msgDB.Exec(`
 			DELETE FROM calls WHERE id NOT IN (
 				SELECT id FROM calls ORDER BY timestamp DESC LIMIT ?

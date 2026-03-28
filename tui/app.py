@@ -13,6 +13,8 @@ from textual.widgets import Footer, Header
 
 ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 
+MAX_ENTRIES = 200
+
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
 from tui.widgets import (
@@ -233,7 +235,8 @@ class WaCLIApp(App):
                     group_name=call["group_name"],
                 )
             )
-        self.entries = sorted(messages + calls, key=lambda e: e.timestamp)
+        merged = sorted(messages + calls, key=lambda e: e.timestamp)
+        self.entries = merged[-MAX_ENTRIES:]
         log(f"load_entries_from_data: loaded {len(self.entries)} entries")
 
     def action_select_next(self) -> None:

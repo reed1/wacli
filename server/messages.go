@@ -171,7 +171,7 @@ func (a *App) saveMessage(msg *Message) error {
 		return err
 	}
 
-	if count > maxMessages {
+	if count > maxEntries {
 		_, err = a.msgDB.Exec(`
 			DELETE FROM messages WHERE id NOT IN (
 				SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?

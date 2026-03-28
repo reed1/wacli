@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	maxMessages = 200
+	maxEntries  = 200
 	trimToCount = 150
 )
 
