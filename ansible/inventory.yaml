@@ -1,10 +1,21 @@
 all:
-  hosts:
-    sgtent:
-      ansible_host: sgtent
-      ansible_user: reed
-
-      listen_addr: "100.97.165.105:3010"
-      app_dir: "{{ home_dir }}/app/wacli"
-      transcription_script: "{{ app_dir }}/server/transcribe.sh"
-      groq_api_key: "{{ lookup('pipe', 'rpass get personal/groq/apikey') }}"
+  vars:
+    repo_url: git@github.com:reed1/wacli.git
+  children:
+    prod_servers:
+      hosts:
+        sgtent:
+          ansible_host: sgtent
+          ansible_user: reed
+          ansible_become_pass: "{{ lookup('pipe', 'rpass get personal/hosts/sgtent/ssh') }}"
+          home_dir: /home/reed
+          app_dir: /home/reed/app/wacli
+          listen_addr: "100.97.165.105:3010"
+          transcription_script: /home/reed/app/wacli/server/transcribe.sh
+          groq_api_key: "{{ lookup('pipe', 'rpass get personal/groq/apikey') }}"
+    local:
+      hosts:
+        localhost:
+          ansible_connection: local
+          home_dir: /home/reed
+          wacli_dir: /home/reed/proj/wacli

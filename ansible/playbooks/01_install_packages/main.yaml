@@ -1,0 +1,8 @@
+- name: Install system packages
+  hosts: prod_servers
+  become: true
+  tasks:
+    - name: Install Go
+      ansible.builtin.apt:
+        name: golang
+        state: present

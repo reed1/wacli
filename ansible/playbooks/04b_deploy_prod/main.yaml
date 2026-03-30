@@ -1,42 +1,32 @@
-- name: Setup wacli server
-  hosts: sgtent
-  gather_facts: false
+- name: Deploy wacli server
+  hosts: prod_servers
   vars:
-    ansible_user: reed
     ansible_become_pass: "{{ lookup('pipe', 'rpass get personal/hosts/sgtent/ssh') }}"
-    home_dir: /home/{{ ansible_user }}
-    repo_url: git@github.com:reed1/wacli.git
-
   tasks:
-    - name: Install Go
-      become: true
-      ansible.builtin.apt:
-        name: golang
-        state: present
-
-    - name: Clone wacli repository
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
-        dest: "{{ app_dir }}"
-        version: main
-        accept_hostkey: true
-
     - name: Deploy .env file
       ansible.builtin.template:
-        src: env.j2
+        src: templates/env.j2
         dest: "{{ app_dir }}/server/.env"
         mode: "0600"
+      tags: [push-prod]
 
     - name: Deploy transcribe script
       ansible.builtin.template:
-        src: transcribe.sh.j2
+        src: templates/transcribe.sh.j2
         dest: "{{ app_dir }}/server/transcribe.sh"
         mode: "0755"
+      tags: [push-prod]
 
     - name: Build Go binary
       ansible.builtin.command:
         cmd: go build
         chdir: "{{ app_dir }}/server"
+      tags: [push-prod]
+
+    - name: Enable user lingering
+      become: true
+      ansible.builtin.command:
+        cmd: loginctl enable-linger {{ ansible_user }}
 
     - name: Create systemd user directory
       ansible.builtin.file:
@@ -46,7 +36,7 @@
 
     - name: Install wacli-server service
       ansible.builtin.template:
-        src: wacli-server.service.j2
+        src: templates/wacli-server.service.j2
         dest: "{{ home_dir }}/.config/systemd/user/wacli-server.service"
         mode: "0644"
 
@@ -54,6 +44,7 @@
       ansible.builtin.systemd:
         daemon_reload: true
         scope: user
+      tags: [push-prod]
 
     - name: Restart wacli-server
       ansible.builtin.systemd:
@@ -61,3 +52,4 @@
         enabled: true
         state: restarted
         scope: user
+      tags: [never, push-prod]

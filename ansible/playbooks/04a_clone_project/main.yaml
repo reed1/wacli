@@ -1,0 +1,16 @@
+- name: Clone and update project
+  hosts: prod_servers
+  tasks:
+    - name: Clone repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: main
+        accept_hostkey: true
+
+    - name: Pull latest code
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: main
+      tags: [never, push-all]
