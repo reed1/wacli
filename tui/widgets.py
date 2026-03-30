@@ -125,6 +125,11 @@ class ComposeInput(TextArea):
     app: "WaCLIApp"
 
     async def _on_key(self, event) -> None:
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_cancel()
+            return
         if event.key == "enter":
             event.stop()
             event.prevent_default()
