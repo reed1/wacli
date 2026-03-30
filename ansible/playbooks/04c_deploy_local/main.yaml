@@ -12,13 +12,13 @@
         src: templates/wacli-notifier.service.j2
         dest: "{{ home_dir }}/.config/systemd/user/wacli-notifier.service"
         mode: "0644"
-      tags: [push-local]
+      tags: [push-notifier]
 
     - name: Reload systemd user daemon
       ansible.builtin.systemd:
         daemon_reload: true
         scope: user
-      tags: [push-local]
+      tags: [push-notifier]
 
     - name: Enable and restart wacli-notifier
       ansible.builtin.systemd:
@@ -26,4 +26,4 @@
         enabled: true
         state: restarted
         scope: user
-      tags: [never, push-local]
+      tags: [never, push-notifier]
