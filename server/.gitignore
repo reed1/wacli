@@ -4,3 +4,5 @@ wacli
 .env
 
 /transcribe.sh
+/media/*
+!/media/.gitkeep

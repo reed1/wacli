@@ -191,7 +191,8 @@ func initMessageDB() (*sql.DB, error) {
 			is_muted INTEGER NOT NULL,
 			is_reply_to_me INTEGER NOT NULL,
 			message_type TEXT NOT NULL DEFAULT '',
-			text TEXT NOT NULL
+			text TEXT NOT NULL,
+			media_file TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 
@@ -210,6 +211,8 @@ func initMessageDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	db.Exec("ALTER TABLE messages ADD COLUMN media_file TEXT")
 
 	_, err = db.Exec("VACUUM")
 	if err != nil {
@@ -358,7 +361,7 @@ type EntriesData struct {
 }
 
 func (a *App) sendEntries(conn net.Conn) error {
-	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text FROM messages ORDER BY timestamp")
+	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file FROM messages ORDER BY timestamp")
 	if err != nil {
 		return err
 	}
@@ -368,7 +371,7 @@ func (a *App) sendEntries(conn net.Conn) error {
 	for rows.Next() {
 		var msg Message
 		var isGroup, isMuted, isReplyToMe int
-		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile); err != nil {
 			return err
 		}
 		msg.IsGroup = isGroup != 0

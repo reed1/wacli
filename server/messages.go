@@ -80,18 +80,19 @@ func (a *App) resolveMentions(text string, msg *waE2E.Message) (result string) {
 }
 
 type Message struct {
-	ID          int64  `json:"id"`
-	MessageID   string `json:"message_id"`
-	Timestamp   int64  `json:"timestamp"`
-	ChatJID     string `json:"chat_jid"`
-	ChatName    string `json:"chat_name"`
-	SenderJID   string `json:"sender_jid"`
-	SenderName  string `json:"sender_name"`
-	IsGroup     bool   `json:"is_group"`
-	IsMuted     bool   `json:"is_muted"`
-	IsReplyToMe bool   `json:"is_reply_to_me"`
-	MessageType string `json:"message_type"`
-	Text        string `json:"text"`
+	ID          int64   `json:"id"`
+	MessageID   string  `json:"message_id"`
+	Timestamp   int64   `json:"timestamp"`
+	ChatJID     string  `json:"chat_jid"`
+	ChatName    string  `json:"chat_name"`
+	SenderJID   string  `json:"sender_jid"`
+	SenderName  string  `json:"sender_name"`
+	IsGroup     bool    `json:"is_group"`
+	IsMuted     bool    `json:"is_muted"`
+	IsReplyToMe bool    `json:"is_reply_to_me"`
+	MessageType string  `json:"message_type"`
+	Text        string  `json:"text"`
+	MediaFile   *string `json:"media_file"`
 }
 
 func (a *App) handleMessage(msg *events.Message) {
@@ -125,6 +126,16 @@ func (a *App) handleMessage(msg *events.Message) {
 		go a.handleVoiceMessage(msg, audio)
 	}
 
+	var mediaFile *string
+	if img := msg.Message.GetImageMessage(); img != nil {
+		filename, err := a.downloadMedia(msg, img)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to download image: %v\n", err)
+		} else {
+			mediaFile = &filename
+		}
+	}
+
 	senderName := a.getSenderName(msg)
 	chatName := a.getChatName(msg)
 
@@ -140,6 +151,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		IsReplyToMe: isReplyToMe,
 		MessageType: msgType,
 		Text:        text,
+		MediaFile:   mediaFile,
 	}
 
 	if err := a.saveMessage(message); err != nil {
@@ -172,6 +184,7 @@ func (a *App) saveMessage(msg *Message) error {
 	}
 
 	if count > maxEntries {
+		a.cleanupMediaForOldMessages()
 		_, err = a.msgDB.Exec(`
 			DELETE FROM messages WHERE id NOT IN (
 				SELECT id FROM messages ORDER BY timestamp DESC LIMIT ?
