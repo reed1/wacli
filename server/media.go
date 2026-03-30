@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +44,36 @@ func (a *App) downloadMedia(msg *events.Message, img *waE2E.ImageMessage) (strin
 	}
 
 	return filename, nil
+}
+
+type MediaResponse struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Data      string `json:"data,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (a *App) sendMedia(conn net.Conn, requestID string, filename string) {
+	resp := MediaResponse{Type: "media", RequestID: requestID}
+
+	if filename == "" || strings.Contains(filename, "/") || strings.Contains(filename, "..") {
+		resp.Error = "invalid filename"
+		data, _ := json.Marshal(resp)
+		conn.Write(append(data, '\n'))
+		return
+	}
+
+	fileData, err := os.ReadFile(filepath.Join(mediaDir, filename))
+	if err != nil {
+		resp.Error = "file not found"
+		data, _ := json.Marshal(resp)
+		conn.Write(append(data, '\n'))
+		return
+	}
+
+	resp.Data = base64.StdEncoding.EncodeToString(fileData)
+	data, _ := json.Marshal(resp)
+	conn.Write(append(data, '\n'))
 }
 
 func (a *App) cleanupMediaForOldMessages() {

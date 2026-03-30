@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import re
 import subprocess
@@ -81,6 +82,7 @@ class WaCLIApp(App):
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
         self.pending_request_id: str | None = None
+        self.media_futures: dict[str, asyncio.Future] = {}
         self._chord_buf: str = ""
         self._chord_timer: asyncio.TimerHandle | None = None
         self._chord_prefixes: set[str] = set()
@@ -135,7 +137,7 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
-        reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=1024 * 1024)
+        reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=8 * 1024 * 1024)
         self.socket_writer = writer
         log("listen_socket: connected, requesting entries")
         writer.write(b'{"action":"get_entries"}\n')
@@ -156,6 +158,12 @@ class WaCLIApp(App):
                         self.hide_compose()
                     else:
                         self.exit(return_code=1, message=f"Send failed: {event.get('error', 'unknown error')}")
+                continue
+
+            if entry_type == "media":
+                future = self.media_futures.pop(event.get("request_id", ""), None)
+                if future and not future.done():
+                    future.set_result(event)
                 continue
 
             data = event["data"]
@@ -190,6 +198,7 @@ class WaCLIApp(App):
                     is_reply_to_me=data["is_reply_to_me"],
                     message_type=data.get("message_type", ""),
                     text=data["text"],
+                    media_file=data.get("media_file"),
                 )
                 log(f"listen_socket: parsed message: {entry.text}")
             else:
@@ -219,6 +228,7 @@ class WaCLIApp(App):
                     is_reply_to_me=msg["is_reply_to_me"],
                     message_type=msg.get("message_type", ""),
                     text=msg["text"],
+                    media_file=msg.get("media_file"),
                 )
             )
         calls: list[Entry] = []
@@ -405,6 +415,34 @@ class WaCLIApp(App):
         modal.update(render_mentions(entry.text))
         modal.add_class("visible")
         modal.focus()
+        if entry.media_file:
+            self.run_worker(self.open_media(entry.media_file))
+
+    async def open_media(self, media_file: str) -> None:
+        if not self.socket_writer:
+            self.notify("Image could not be fetched", severity="error")
+            return
+
+        request_id = str(uuid.uuid4())
+        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        self.media_futures[request_id] = future
+
+        payload = json.dumps({"action": "get_media", "request_id": request_id, "filename": media_file})
+        self.socket_writer.write((payload + "\n").encode())
+        await self.socket_writer.drain()
+
+        event = await future
+        if event.get("error"):
+            self.notify("Image could not be fetched", severity="error")
+            return
+
+        local_path = RUNTIME_DIR / media_file
+        local_path.write_bytes(base64.b64decode(event["data"]))
+        subprocess.Popen(
+            ["feh", str(local_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)

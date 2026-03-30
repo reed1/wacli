@@ -16,6 +16,7 @@ class Message:
     is_reply_to_me: bool
     message_type: str
     text: str
+    media_file: str | None = None
 
     @property
     def formatted_time(self) -> str:

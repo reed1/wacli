@@ -248,6 +248,7 @@ type SocketCommand struct {
 	MessageID string `json:"message_id"`
 	SenderJID string `json:"sender_jid"`
 	Text      string `json:"text"`
+	Filename  string `json:"filename"`
 }
 
 type SocketResponse struct {
@@ -295,6 +296,8 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			if err := a.sendEntries(conn); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send entries: %v\n", err)
 			}
+		case "get_media":
+			a.sendMedia(conn, cmd.RequestID, cmd.Filename)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
