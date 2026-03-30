@@ -420,30 +420,25 @@ class WaCLIApp(App):
             self.run_worker(self.open_media(entry.media_file))
 
     async def open_media(self, media_file: str) -> None:
-        if not self.socket_writer:
+        try:
+            request_id = str(uuid.uuid4())
+            future: asyncio.Future = asyncio.get_event_loop().create_future()
+            self.media_futures[request_id] = future
+
+            payload = json.dumps({"action": "get_media", "request_id": request_id, "filename": media_file})
+            self.socket_writer.write((payload + "\n").encode())
+            await self.socket_writer.drain()
+
+            event = await future
+            if event.get("error"):
+                self.notify("Image could not be fetched", severity="error")
+                return
+
+            local_path = RUNTIME_DIR / media_file
+            local_path.write_bytes(base64.b64decode(event["data"]))
+            subprocess.Popen(["feh", str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
             self.notify("Image could not be fetched", severity="error")
-            return
-
-        request_id = str(uuid.uuid4())
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
-        self.media_futures[request_id] = future
-
-        payload = json.dumps({"action": "get_media", "request_id": request_id, "filename": media_file})
-        self.socket_writer.write((payload + "\n").encode())
-        await self.socket_writer.drain()
-
-        event = await future
-        if event.get("error"):
-            self.notify("Image could not be fetched", severity="error")
-            return
-
-        local_path = RUNTIME_DIR / media_file
-        local_path.write_bytes(base64.b64decode(event["data"]))
-        subprocess.Popen(
-            ["feh", str(local_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
 
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)
