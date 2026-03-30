@@ -411,10 +411,11 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
-        modal = self.query_one(MessageModal)
-        modal.update(render_mentions(entry.text))
-        modal.add_class("visible")
-        modal.focus()
+        if entry.text.strip():
+            modal = self.query_one(MessageModal)
+            modal.update(render_mentions(entry.text))
+            modal.add_class("visible")
+            modal.focus()
         if entry.media_file:
             self.run_worker(self.open_media(entry.media_file))
 
