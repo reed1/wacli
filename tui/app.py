@@ -6,15 +6,12 @@ import subprocess
 import uuid
 
 from collections import namedtuple
+from pathlib import Path
 
 import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
-
-ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
-
-MAX_ENTRIES = 200
 
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
@@ -28,6 +25,58 @@ from tui.widgets import (
     render_mentions,
     strip_mentions,
 )
+
+ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
+
+MAX_ENTRIES = 200
+SOCKET_READ_LIMIT = 1024 * 1024
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
+
+
+class MediaAssembler:
+    def __init__(self, future: asyncio.Future, path: Path) -> None:
+        self.future = future
+        self.path = path
+        self.file = None
+        self.next_seq = 0
+
+    def handle_event(self, event: dict) -> None:
+        if event.get("error"):
+            self._fail(event["error"])
+            return
+
+        seq = event.get("seq", 0)
+        if seq != self.next_seq:
+            self._fail(f"out-of-order chunk: expected {self.next_seq}, got {seq}")
+            return
+        self.next_seq += 1
+
+        chunk_b64 = event.get("data", "")
+        if chunk_b64:
+            if self.file is None:
+                self.file = open(self.path, "wb")
+            self.file.write(base64.b64decode(chunk_b64))
+
+        if event.get("done"):
+            if self.file is not None:
+                self.file.close()
+                self.file = None
+            else:
+                self.path.write_bytes(b"")
+            if not self.future.done():
+                self.future.set_result(None)
+
+    def _fail(self, msg: str) -> None:
+        if self.file is not None:
+            self.file.close()
+            self.file = None
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        if not self.future.done():
+            self.future.set_exception(RuntimeError(msg))
 
 
 class WaCLIApp(App):
@@ -82,7 +131,7 @@ class WaCLIApp(App):
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
         self.pending_request_id: str | None = None
-        self.media_futures: dict[str, asyncio.Future] = {}
+        self.media_assemblers: dict[str, MediaAssembler] = {}
         self._chord_buf: str = ""
         self._chord_timer: asyncio.TimerHandle | None = None
         self._chord_prefixes: set[str] = set()
@@ -137,7 +186,7 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         log("listen_socket: connecting...")
-        reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=8 * 1024 * 1024)
+        reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=SOCKET_READ_LIMIT)
         self.socket_writer = writer
         log("listen_socket: connected, requesting entries")
         writer.write(b'{"action":"get_entries"}\n')
@@ -161,9 +210,13 @@ class WaCLIApp(App):
                 continue
 
             if entry_type == "media":
-                future = self.media_futures.pop(event.get("request_id", ""), None)
-                if future and not future.done():
-                    future.set_result(event)
+                request_id = event.get("request_id", "")
+                assembler = self.media_assemblers.get(request_id)
+                if assembler is None:
+                    continue
+                assembler.handle_event(event)
+                if assembler.future.done():
+                    self.media_assemblers.pop(request_id, None)
                 continue
 
             data = event["data"]
@@ -420,25 +473,31 @@ class WaCLIApp(App):
             self.run_worker(self.open_media(entry.media_file))
 
     async def open_media(self, media_file: str) -> None:
-        try:
-            request_id = str(uuid.uuid4())
-            future: asyncio.Future = asyncio.get_event_loop().create_future()
-            self.media_futures[request_id] = future
+        local_path = RUNTIME_DIR / media_file
+        ext = local_path.suffix.lower()
+        if ext in IMAGE_EXTS:
+            viewer = "feh"
+        elif ext in VIDEO_EXTS:
+            viewer = "mpv"
+        else:
+            self.notify(f"No viewer for {ext or 'unknown type'}", severity="error")
+            return
 
+        request_id = str(uuid.uuid4())
+        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        self.media_assemblers[request_id] = MediaAssembler(future, local_path)
+
+        try:
             payload = json.dumps({"action": "get_media", "request_id": request_id, "filename": media_file})
             self.socket_writer.write((payload + "\n").encode())
             await self.socket_writer.drain()
-
-            event = await future
-            if event.get("error"):
-                self.notify("Image could not be fetched", severity="error")
-                return
-
-            local_path = RUNTIME_DIR / media_file
-            local_path.write_bytes(base64.b64decode(event["data"]))
-            subprocess.Popen(["feh", str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await future
         except Exception:
-            self.notify("Image could not be fetched", severity="error")
+            self.media_assemblers.pop(request_id, None)
+            self.notify("Media could not be fetched", severity="error")
+            return
+
+        subprocess.Popen([viewer, str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)

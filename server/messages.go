@@ -128,9 +128,16 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	var mediaFile *string
 	if img := msg.Message.GetImageMessage(); img != nil {
-		filename, err := a.downloadMedia(msg, img)
+		filename, err := a.downloadMedia(img, img.GetMimetype())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to download image: %v\n", err)
+		} else {
+			mediaFile = &filename
+		}
+	} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+		filename, err := a.downloadMedia(vid, vid.GetMimetype())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to download video: %v\n", err)
 		} else {
 			mediaFile = &filename
 		}
@@ -204,7 +211,7 @@ func (a *App) isMuted(chatJID types.JID) bool {
 		return false
 	}
 
-	if settings.MutedUntil == store.MutedForever {
+	if settings.MutedUntil.Equal(store.MutedForever) {
 		return true
 	}
 	if settings.MutedUntil.After(time.Now()) {

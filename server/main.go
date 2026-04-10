@@ -44,8 +44,20 @@ type App struct {
 	msgDB       *sql.DB
 	waDB        *sql.DB
 	config      Config
-	socketConns map[net.Conn]struct{}
+	socketConns map[net.Conn]*connState
 	connMu      sync.RWMutex
+}
+
+type connState struct {
+	conn    net.Conn
+	writeMu sync.Mutex
+}
+
+func (s *connState) write(data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err := s.conn.Write(data)
+	return err
 }
 
 func loadConfig() Config {
@@ -112,7 +124,7 @@ func main() {
 		msgDB:       msgDB,
 		waDB:        waDB,
 		config:      config,
-		socketConns: make(map[net.Conn]struct{}),
+		socketConns: make(map[net.Conn]*connState),
 	}
 
 	client.AddEventHandler(app.handleEvent)
@@ -259,8 +271,10 @@ type SocketResponse struct {
 }
 
 func (a *App) handleSocketConn(conn net.Conn) {
+	state := &connState{conn: conn}
+
 	a.connMu.Lock()
-	a.socketConns[conn] = struct{}{}
+	a.socketConns[conn] = state
 	a.connMu.Unlock()
 
 	defer func() {
@@ -285,26 +299,26 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send message: %v\n", err)
 			}
-			a.sendResponse(conn, cmd.RequestID, err)
+			a.sendResponse(state, cmd.RequestID, err)
 		case "reply":
 			err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
 			}
-			a.sendResponse(conn, cmd.RequestID, err)
+			a.sendResponse(state, cmd.RequestID, err)
 		case "get_entries":
-			if err := a.sendEntries(conn); err != nil {
+			if err := a.sendEntries(state); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send entries: %v\n", err)
 			}
 		case "get_media":
-			a.sendMedia(conn, cmd.RequestID, cmd.Filename)
+			a.sendMedia(state, cmd.RequestID, cmd.Filename)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
 	}
 }
 
-func (a *App) sendResponse(conn net.Conn, requestID string, err error) {
+func (a *App) sendResponse(state *connState, requestID string, err error) {
 	resp := SocketResponse{
 		Type:      "response",
 		RequestID: requestID,
@@ -318,7 +332,7 @@ func (a *App) sendResponse(conn net.Conn, requestID string, err error) {
 		return
 	}
 	data = append(data, '\n')
-	conn.Write(data)
+	state.write(data)
 }
 
 type SocketEvent struct {
@@ -337,8 +351,8 @@ func (a *App) broadcastMessage(msg *Message) {
 	a.connMu.RLock()
 	defer a.connMu.RUnlock()
 
-	for conn := range a.socketConns {
-		conn.Write(data)
+	for _, state := range a.socketConns {
+		state.write(data)
 	}
 }
 
@@ -353,8 +367,8 @@ func (a *App) broadcastCall(call *Call) {
 	a.connMu.RLock()
 	defer a.connMu.RUnlock()
 
-	for conn := range a.socketConns {
-		conn.Write(data)
+	for _, state := range a.socketConns {
+		state.write(data)
 	}
 }
 
@@ -363,7 +377,7 @@ type EntriesData struct {
 	Calls    []Call    `json:"calls"`
 }
 
-func (a *App) sendEntries(conn net.Conn) error {
+func (a *App) sendEntries(state *connState) error {
 	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file FROM messages ORDER BY timestamp")
 	if err != nil {
 		return err
@@ -406,8 +420,7 @@ func (a *App) sendEntries(conn net.Conn) error {
 		return err
 	}
 	data = append(data, '\n')
-	_, err = conn.Write(data)
-	return err
+	return state.write(data)
 }
 
 func (a *App) sendMessage(chatJID string, text string) error {
