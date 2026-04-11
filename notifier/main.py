@@ -54,14 +54,26 @@ def main():
         while True:
             data = sock.recv(4096).decode()
             if not data:
-                break
+                print("Server closed connection, exiting", file=sys.stderr)
+                sys.exit(1)
 
             buffer += data
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 event = json.loads(line)
-                if event["type"] == "message":
+                event_type = event["type"]
+                if event_type == "message":
                     send_attention()
+                elif event_type == "connection_state":
+                    connected = event["data"]["connected"]
+                    reason = event["data"].get("reason", "")
+                    if not connected:
+                        print(
+                            f"WhatsApp disconnected: {reason or 'unknown'}",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+                    print("WhatsApp connected")
 
 
 if __name__ == "__main__":

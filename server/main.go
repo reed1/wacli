@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -26,8 +27,9 @@ import (
 )
 
 const (
-	maxEntries  = 200
-	trimToCount = 150
+	maxEntries      = 200
+	trimToCount     = 150
+	failureFlagFile = ".permanent_failure"
 )
 
 type Config struct {
@@ -39,13 +41,16 @@ type Config struct {
 }
 
 type App struct {
-	client      *whatsmeow.Client
-	ctx         context.Context
-	msgDB       *sql.DB
-	waDB        *sql.DB
-	config      Config
-	socketConns map[net.Conn]*connState
-	connMu      sync.RWMutex
+	client       *whatsmeow.Client
+	ctx          context.Context
+	msgDB        *sql.DB
+	waDB         *sql.DB
+	config       Config
+	socketConns  map[net.Conn]*connState
+	connMu       sync.RWMutex
+	waConnected  bool
+	waReason     string
+	stateMu      sync.RWMutex
 }
 
 type connState struct {
@@ -142,6 +147,8 @@ func main() {
 }
 
 func runDaemon(app *App) {
+	checkFailureFlag()
+
 	if app.client.Store.ID == nil {
 		fmt.Fprintf(os.Stderr, "Device not logged in. Run 'wacli login' first.\n")
 		os.Exit(1)
@@ -284,6 +291,8 @@ func (a *App) handleSocketConn(conn net.Conn) {
 		conn.Close()
 	}()
 
+	a.sendConnectionState(state)
+
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -338,6 +347,65 @@ func (a *App) sendResponse(state *connState, requestID string, err error) {
 type SocketEvent struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
+}
+
+func checkFailureFlag() {
+	data, err := os.ReadFile(failureFlagFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Failed to read failure flag %s: %v\n", failureFlagFile, err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Refusing to start: permanent WhatsApp failure recorded.\n%s\nRemove %s to allow retry.\n", string(data), failureFlagFile)
+	os.Exit(1)
+}
+
+func writeFailureFlag(eventType, description string) {
+	content := fmt.Sprintf("time: %s\nevent: %s\ndescription: %s\n", time.Now().Format(time.RFC3339), eventType, description)
+	if err := os.WriteFile(failureFlagFile, []byte(content), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write failure flag %s: %v\n", failureFlagFile, err)
+	}
+}
+
+type ConnectionState struct {
+	Connected bool   `json:"connected"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func (a *App) setWAState(connected bool, reason string) {
+	a.stateMu.Lock()
+	a.waConnected = connected
+	a.waReason = reason
+	a.stateMu.Unlock()
+
+	event := SocketEvent{Type: "connection_state", Data: ConnectionState{Connected: connected, Reason: reason}}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	a.connMu.RLock()
+	defer a.connMu.RUnlock()
+	for _, state := range a.socketConns {
+		state.write(data)
+	}
+}
+
+func (a *App) sendConnectionState(state *connState) {
+	a.stateMu.RLock()
+	connected, reason := a.waConnected, a.waReason
+	a.stateMu.RUnlock()
+
+	event := SocketEvent{Type: "connection_state", Data: ConnectionState{Connected: connected, Reason: reason}}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	state.write(data)
 }
 
 func (a *App) broadcastMessage(msg *Message) {
@@ -487,6 +555,15 @@ func (a *App) loginWithQR() error {
 }
 
 func (a *App) handleEvent(evt interface{}) {
+	if pd, ok := evt.(events.PermanentDisconnect); ok {
+		eventType := reflect.TypeOf(evt).String()
+		desc := pd.PermanentDisconnectDescription()
+		fmt.Fprintf(os.Stderr, "Permanent WhatsApp failure (%s): %s\n", eventType, desc)
+		a.setWAState(false, desc)
+		writeFailureFlag(eventType, desc)
+		os.Exit(1)
+	}
+
 	switch v := evt.(type) {
 	case *events.Message:
 		a.handleMessage(v)
@@ -496,11 +573,13 @@ func (a *App) handleEvent(evt interface{}) {
 		a.handleCallOfferNotice(v)
 	case *events.Connected:
 		fmt.Println("Connected to WhatsApp")
+		a.setWAState(true, "")
 	case *events.Disconnected:
 		fmt.Println("Disconnected from WhatsApp")
-	case *events.LoggedOut:
-		fmt.Println("Logged out from WhatsApp")
-		os.Exit(0)
+		a.setWAState(false, "disconnected")
+	case *events.StreamError:
+		fmt.Fprintf(os.Stderr, "WhatsApp stream error: %s\n", v.Code)
+		a.setWAState(false, fmt.Sprintf("stream error: %s", v.Code))
 	}
 }
 
