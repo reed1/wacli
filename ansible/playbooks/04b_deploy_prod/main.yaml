@@ -39,6 +39,7 @@
         src: templates/wacli-server.service.j2
         dest: "{{ home_dir }}/.config/systemd/user/wacli-server.service"
         mode: "0644"
+      tags: [push-server]
 
     - name: Reload systemd user daemon
       ansible.builtin.systemd:

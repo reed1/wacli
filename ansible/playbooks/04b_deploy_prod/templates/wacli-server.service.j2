@@ -9,6 +9,7 @@ WorkingDirectory={{ app_dir }}/server
 ExecStart={{ app_dir }}/server/wacli
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=2
 
 [Install]
 WantedBy=default.target

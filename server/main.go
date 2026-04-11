@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	maxEntries      = 200
-	trimToCount     = 150
-	failureFlagFile = ".permanent_failure"
+	maxEntries               = 200
+	trimToCount              = 150
+	failureFlagFile          = ".permanent_failure"
+	permanentFailureExitCode = 2
 )
 
 type Config struct {
@@ -359,7 +360,7 @@ func checkFailureFlag() {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "Refusing to start: permanent WhatsApp failure recorded.\n%s\nRemove %s to allow retry.\n", string(data), failureFlagFile)
-	os.Exit(1)
+	os.Exit(permanentFailureExitCode)
 }
 
 func writeFailureFlag(eventType, description string) {
@@ -561,7 +562,7 @@ func (a *App) handleEvent(evt interface{}) {
 		fmt.Fprintf(os.Stderr, "Permanent WhatsApp failure (%s): %s\n", eventType, desc)
 		a.setWAState(false, desc)
 		writeFailureFlag(eventType, desc)
-		os.Exit(1)
+		os.Exit(permanentFailureExitCode)
 	}
 
 	switch v := evt.(type) {
