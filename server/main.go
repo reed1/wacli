@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -29,7 +28,6 @@ import (
 const (
 	maxEntries               = 200
 	trimToCount              = 150
-	failureFlagFile          = ".permanent_failure"
 	permanentFailureExitCode = 2
 )
 
@@ -148,8 +146,6 @@ func main() {
 }
 
 func runDaemon(app *App) {
-	checkFailureFlag()
-
 	if app.client.Store.ID == nil {
 		fmt.Fprintf(os.Stderr, "Device not logged in. Run 'wacli login' first.\n")
 		os.Exit(1)
@@ -350,26 +346,6 @@ type SocketEvent struct {
 	Data interface{} `json:"data"`
 }
 
-func checkFailureFlag() {
-	data, err := os.ReadFile(failureFlagFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return
-		}
-		fmt.Fprintf(os.Stderr, "Failed to read failure flag %s: %v\n", failureFlagFile, err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "Refusing to start: permanent WhatsApp failure recorded.\n%s\nRemove %s to allow retry.\n", string(data), failureFlagFile)
-	os.Exit(permanentFailureExitCode)
-}
-
-func writeFailureFlag(eventType, description string) {
-	content := fmt.Sprintf("time: %s\nevent: %s\ndescription: %s\n", time.Now().Format(time.RFC3339), eventType, description)
-	if err := os.WriteFile(failureFlagFile, []byte(content), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to write failure flag %s: %v\n", failureFlagFile, err)
-	}
-}
-
 type ConnectionState struct {
 	Connected bool   `json:"connected"`
 	Reason    string `json:"reason,omitempty"`
@@ -561,7 +537,6 @@ func (a *App) handleEvent(evt interface{}) {
 		desc := pd.PermanentDisconnectDescription()
 		fmt.Fprintf(os.Stderr, "Permanent WhatsApp failure (%s): %s\n", eventType, desc)
 		a.setWAState(false, desc)
-		writeFailureFlag(eventType, desc)
 		os.Exit(permanentFailureExitCode)
 	}
 
