@@ -219,6 +219,14 @@ class WaCLIApp(App):
                     self.media_assemblers.pop(request_id, None)
                 continue
 
+            if entry_type == "connection_state":
+                state = event.get("data") or {}
+                log(
+                    f"listen_socket: connection_state connected={state.get('connected')} "
+                    f"reason={state.get('reason', '')}"
+                )
+                continue
+
             data = event["data"]
             if entry_type == "entries":
                 self.load_entries_from_data(data)
