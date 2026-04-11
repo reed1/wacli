@@ -54,3 +54,10 @@
         state: restarted
         scope: user
       tags: [never, push-server]
+
+    - name: Validate wacli-server reports WhatsApp connected
+      ansible.builtin.script:
+        cmd: "files/wait_for_wa_connected.py {{ listen_addr }}"
+        executable: python3
+      changed_when: false
+      tags: [never, push-server]
