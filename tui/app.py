@@ -11,7 +11,7 @@ from pathlib import Path
 import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header
+from textual.widgets import Header
 
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
@@ -21,6 +21,8 @@ from tui.widgets import (
     EntryWidget,
     MessageList,
     MessageModal,
+    SearchInput,
+    StatusBar,
     format_entry_plain,
     render_mentions,
     strip_mentions,
@@ -114,7 +116,10 @@ class WaCLIApp(App):
         Binding("r", "compose_reply", "Reply"),
         Binding("y", "copy_message", "Copy"),
         Binding("H", "show_message", "View"),
-        Binding("slash", "search_nvim", "Search"),
+        Binding("slash", "open_search", "Search"),
+        Binding("n", "search_next", "Next match", show=False),
+        Binding("N", "search_prev", "Prev match", show=False),
+        Binding("escape", "clear_search", "Clear search", show=False),
     ]
 
     HALF_PAGE = 15
@@ -136,6 +141,9 @@ class WaCLIApp(App):
         self._chord_timer: asyncio.TimerHandle | None = None
         self._chord_prefixes: set[str] = set()
         self._chord_map: dict[str, str] = {}
+        self.search_query: str = ""
+        self.search_matches: list[int] = []
+        self.search_index: int = -1
         for cb in self.CHORD_BINDINGS:
             self._chord_map[cb.keys] = cb.action
             for i in range(1, len(cb.keys)):
@@ -147,7 +155,8 @@ class WaCLIApp(App):
         yield ComposeQuote()
         yield ComposeInput()
         yield MessageModal()
-        yield Footer()
+        yield SearchInput()
+        yield StatusBar("")
 
     async def on_mount(self) -> None:
         log("on_mount: start")
@@ -458,16 +467,6 @@ class WaCLIApp(App):
         self.socket_writer.write((json.dumps(payload) + "\n").encode())
         await self.socket_writer.drain()
 
-    def action_search_nvim(self) -> None:
-        if not self.entries:
-            return
-        tmp = RUNTIME_DIR / "messages.txt"
-        with open(tmp, "w") as f:
-            for entry in self.entries:
-                f.write(format_entry_plain(entry) + "\n")
-        with self.suspend():
-            subprocess.run(["nvim", "+$", "+call feedkeys('?')", str(tmp)])
-
     def action_show_message(self) -> None:
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
@@ -510,3 +509,71 @@ class WaCLIApp(App):
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)
         modal.remove_class("visible")
+
+    def set_status(self, text: str) -> None:
+        self.query_one(StatusBar).update(text)
+
+    def action_open_search(self) -> None:
+        if not self.entries:
+            return
+        search = self.query_one(SearchInput)
+        search.reset()
+        self.query_one(StatusBar).add_class("hidden")
+        search.add_class("visible")
+        search.focus()
+
+    def hide_search(self) -> None:
+        search = self.query_one(SearchInput)
+        search.remove_class("visible")
+        self.query_one(StatusBar).remove_class("hidden")
+        self.set_focus(None)
+
+    def run_search(self, query: str) -> None:
+        query = query.strip()
+        self.hide_search()
+        if not query:
+            self.clear_search()
+            return
+        needle = query.lower()
+        matches = [i for i, entry in enumerate(self.entries) if needle in format_entry_plain(entry).lower()]
+        self.search_query = query
+        self.search_matches = matches
+        for widget in self.query(EntryWidget):
+            widget.refresh()
+        if not matches:
+            self.search_index = -1
+            self.set_status(f"0/0 for '{query}'")
+            return
+        cur = self.selected_index
+        idx = next((k for k in range(len(matches) - 1, -1, -1) if matches[k] <= cur), len(matches) - 1)
+        self.search_index = idx
+        self.update_selection(matches[idx])
+        self.set_status(f"{idx + 1}/{len(matches)} for '{query}'")
+
+    def clear_search(self) -> None:
+        if not self.search_query and not self.search_matches:
+            return
+        self.search_query = ""
+        self.search_matches = []
+        self.search_index = -1
+        self.set_status("")
+        for widget in self.query(EntryWidget):
+            widget.refresh()
+
+    def _step_search(self, delta: int) -> None:
+        if not self.search_matches:
+            self.set_status("No active search")
+            return
+        n = len(self.search_matches)
+        self.search_index = (self.search_index + delta) % n
+        self.update_selection(self.search_matches[self.search_index])
+        self.set_status(f"{self.search_index + 1}/{n} for '{self.search_query}'")
+
+    def action_clear_search(self) -> None:
+        self.clear_search()
+
+    def action_search_next(self) -> None:
+        self._step_search(-1)
+
+    def action_search_prev(self) -> None:
+        self._step_search(1)

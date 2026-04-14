@@ -10,15 +10,26 @@ from tui.models import Call, Entry, Message
 MENTION_RE = re.compile(r'<mention jid="[^"]*" name="([^"]*)"/>')
 
 
-def render_mentions(text: str) -> str:
+def _highlight(escaped: str, query: str) -> str:
+    if not query:
+        return escaped
+    return re.compile(re.escape(query), re.IGNORECASE).sub(lambda m: f"[reverse]{m.group(0)}[/reverse]", escaped)
+
+
+def render_mentions(text: str, search_query: str = "") -> str:
     parts = MENTION_RE.split(text)
     result = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            result.append(part.replace("[", "\\["))
+            result.append(_highlight(part.replace("[", "\\["), search_query))
         else:
-            result.append(f"[bold green]@{part.replace("[", "\\[")}[/]")
+            name = part.replace("[", "\\[")
+            result.append(f"[bold green]@{_highlight(name, search_query)}[/]")
     return "".join(result)
+
+
+def highlight_plain(text: str, query: str) -> str:
+    return _highlight(text.replace("[", "\\["), query)
 
 
 def strip_mentions(text: str) -> str:
@@ -60,23 +71,25 @@ class EntryWidget(Static):
 
     def render(self) -> str:
         indicator = ">" if self.has_class("selected") else " "
+        query = getattr(self.app, "search_query", "")
         if isinstance(self.entry, Message):
             msg = self.entry
-            text_oneline = render_mentions(msg.text.replace("\n", " "))
+            text_oneline = render_mentions(msg.text.replace("\n", " "), query)
             if msg.message_type:
                 content = f"[dim]\\[{msg.message_type}][/] {text_oneline}"
             else:
                 content = text_oneline
             # Don't use rich.markup.escape() — it skips uppercase tags like [RUN]
-            sender = msg.title.replace("[", "\\[")
+            sender = highlight_plain(msg.title, query)
             if msg.is_group:
-                chat = msg.chat_name.replace("[", "\\[")
+                chat = highlight_plain(msg.chat_name, query)
                 title = f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
             else:
                 title = sender
             return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {content}"
         call = self.entry
-        return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {call.title}[/]: Incoming call"
+        title = highlight_plain(call.title, query)
+        return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {title}[/]: Incoming call"
 
 
 class MessageList(ScrollableContainer):
@@ -176,3 +189,66 @@ class MessageModal(Static):
 
     def action_dismiss(self) -> None:
         self.app.hide_message_modal()
+
+
+class StatusBar(Static):
+    DEFAULT_CSS = """
+    StatusBar {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+    }
+    StatusBar.hidden {
+        display: none;
+    }
+    """
+
+
+class SearchInput(Static):
+    DEFAULT_CSS = """
+    SearchInput {
+        display: none;
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+    }
+    SearchInput.visible {
+        display: block;
+    }
+    """
+
+    app: "WaCLIApp"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.can_focus = True
+        self.value: str = ""
+
+    def render(self) -> str:
+        return f"/{self.value}\u2588"
+
+    def reset(self) -> None:
+        self.value = ""
+        self.refresh()
+
+    async def _on_key(self, event) -> None:
+        event.stop()
+        event.prevent_default()
+        if event.key == "escape":
+            self.app.hide_search()
+            return
+        if event.key == "enter":
+            self.app.run_search(self.value)
+            return
+        if event.key == "backspace":
+            self.value = self.value[:-1]
+            self.refresh()
+            return
+        char = event.character
+        if char and char.isprintable():
+            self.value += char
+            self.refresh()
