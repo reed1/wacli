@@ -25,7 +25,7 @@ def main() -> int:
 
     app = WaCLIApp()
     try:
-        app.run()
+        app.run(mouse=False)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
