@@ -22,8 +22,29 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
+
+var verbose bool
+
+func vlogf(format string, args ...interface{}) {
+	if !verbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[verbose] "+format+"\n", args...)
+}
+
+func protoDump(m proto.Message) string {
+	if m == nil {
+		return "<nil>"
+	}
+	b, err := (protojson.MarshalOptions{Multiline: false, EmitUnpopulated: false}).Marshal(m)
+	if err != nil {
+		return fmt.Sprintf("<protojson err: %v>", err)
+	}
+	return string(b)
+}
 
 const (
 	maxEntries               = 200
@@ -84,12 +105,18 @@ func loadConfig() Config {
 
 func main() {
 	command := "daemon"
-	if len(os.Args) > 1 {
-		command = os.Args[1]
+	for _, arg := range os.Args[1:] {
+		if arg == "--verbose" || arg == "-v" {
+			verbose = true
+			continue
+		}
+		command = arg
 	}
 
 	config := loadConfig()
 	ctx := context.Background()
+
+	vlogf("verbose logging enabled; command=%s", command)
 
 	msgDB, err := initMessageDB()
 	if err != nil {
@@ -105,7 +132,11 @@ func main() {
 	}
 	defer waDB.Close()
 
-	dbLog := waLog.Stdout("Database", "ERROR", true)
+	waLogLevel := "ERROR"
+	if verbose {
+		waLogLevel = "DEBUG"
+	}
+	dbLog := waLog.Stdout("Database", waLogLevel, true)
 	container, err := sqlstore.New(ctx, "sqlite3", "file:wacli.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create database: %v\n", err)
@@ -118,7 +149,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	clientLog := waLog.Stdout("Client", "ERROR", true)
+	clientLog := waLog.Stdout("Client", waLogLevel, true)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 	client.EnableAutoReconnect = true
 
@@ -208,7 +239,9 @@ func initMessageDB() (*sql.DB, error) {
 			is_reply_to_me INTEGER NOT NULL,
 			message_type TEXT NOT NULL DEFAULT '',
 			text TEXT NOT NULL,
-			media_file TEXT
+			media_file TEXT,
+			original_text TEXT,
+			is_deleted INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 
@@ -229,6 +262,8 @@ func initMessageDB() (*sql.DB, error) {
 	}
 
 	db.Exec("ALTER TABLE messages ADD COLUMN media_file TEXT")
+	db.Exec("ALTER TABLE messages ADD COLUMN original_text TEXT")
+	db.Exec("ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
 
 	_, err = db.Exec("VACUUM")
 	if err != nil {
@@ -293,6 +328,7 @@ func (a *App) handleSocketConn(conn net.Conn) {
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		vlogf("socket <- %s: %s", conn.RemoteAddr(), string(line))
 		var cmd SocketCommand
 		if err := json.Unmarshal(line, &cmd); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to parse socket command: %v\n", err)
@@ -338,6 +374,7 @@ func (a *App) sendResponse(state *connState, requestID string, err error) {
 		return
 	}
 	data = append(data, '\n')
+	vlogf("socket -> response: %s", string(data[:len(data)-1]))
 	state.write(data)
 }
 
@@ -366,6 +403,7 @@ func (a *App) setWAState(connected bool, reason string) {
 
 	a.connMu.RLock()
 	defer a.connMu.RUnlock()
+	vlogf("broadcast connection_state to %d conn(s): connected=%v reason=%q", len(a.socketConns), connected, reason)
 	for _, state := range a.socketConns {
 		state.write(data)
 	}
@@ -396,6 +434,40 @@ func (a *App) broadcastMessage(msg *Message) {
 	a.connMu.RLock()
 	defer a.connMu.RUnlock()
 
+	vlogf("broadcast message to %d conn(s): %s", len(a.socketConns), string(data[:len(data)-1]))
+	for _, state := range a.socketConns {
+		state.write(data)
+	}
+}
+
+func (a *App) broadcastMessageUpdate(messageID string) {
+	var msg Message
+	var isGroup, isMuted, isReplyToMe, isDeleted int
+	err := a.msgDB.QueryRow(
+		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file, original_text, is_deleted
+		 FROM messages WHERE message_id = ?`,
+		messageID,
+	).Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName,
+		&isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load updated message %s: %v\n", messageID, err)
+		return
+	}
+	msg.IsGroup = isGroup != 0
+	msg.IsMuted = isMuted != 0
+	msg.IsReplyToMe = isReplyToMe != 0
+	msg.IsDeleted = isDeleted != 0
+
+	event := SocketEvent{Type: "message_updated", Data: &msg}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	a.connMu.RLock()
+	defer a.connMu.RUnlock()
+	vlogf("broadcast message_updated to %d conn(s): %s", len(a.socketConns), string(data[:len(data)-1]))
 	for _, state := range a.socketConns {
 		state.write(data)
 	}
@@ -412,6 +484,7 @@ func (a *App) broadcastCall(call *Call) {
 	a.connMu.RLock()
 	defer a.connMu.RUnlock()
 
+	vlogf("broadcast call to %d conn(s): %s", len(a.socketConns), string(data[:len(data)-1]))
 	for _, state := range a.socketConns {
 		state.write(data)
 	}
@@ -423,7 +496,7 @@ type EntriesData struct {
 }
 
 func (a *App) sendEntries(state *connState) error {
-	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file FROM messages ORDER BY timestamp")
+	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file, original_text, is_deleted FROM messages ORDER BY timestamp")
 	if err != nil {
 		return err
 	}
@@ -432,13 +505,14 @@ func (a *App) sendEntries(state *connState) error {
 	var messages []Message
 	for rows.Next() {
 		var msg Message
-		var isGroup, isMuted, isReplyToMe int
-		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile); err != nil {
+		var isGroup, isMuted, isReplyToMe, isDeleted int
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted); err != nil {
 			return err
 		}
 		msg.IsGroup = isGroup != 0
 		msg.IsMuted = isMuted != 0
 		msg.IsReplyToMe = isReplyToMe != 0
+		msg.IsDeleted = isDeleted != 0
 		messages = append(messages, msg)
 	}
 
@@ -532,6 +606,8 @@ func (a *App) loginWithQR() error {
 }
 
 func (a *App) handleEvent(evt interface{}) {
+	vlogf("event %s: %+v", reflect.TypeOf(evt).String(), evt)
+
 	if pd, ok := evt.(events.PermanentDisconnect); ok {
 		eventType := reflect.TypeOf(evt).String()
 		desc := pd.PermanentDisconnectDescription()

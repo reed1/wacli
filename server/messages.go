@@ -80,29 +80,49 @@ func (a *App) resolveMentions(text string, msg *waE2E.Message) (result string) {
 }
 
 type Message struct {
-	ID          int64   `json:"id"`
-	MessageID   string  `json:"message_id"`
-	Timestamp   int64   `json:"timestamp"`
-	ChatJID     string  `json:"chat_jid"`
-	ChatName    string  `json:"chat_name"`
-	SenderJID   string  `json:"sender_jid"`
-	SenderName  string  `json:"sender_name"`
-	IsGroup     bool    `json:"is_group"`
-	IsMuted     bool    `json:"is_muted"`
-	IsReplyToMe bool    `json:"is_reply_to_me"`
-	MessageType string  `json:"message_type"`
-	Text        string  `json:"text"`
-	MediaFile   *string `json:"media_file"`
+	ID           int64   `json:"id"`
+	MessageID    string  `json:"message_id"`
+	Timestamp    int64   `json:"timestamp"`
+	ChatJID      string  `json:"chat_jid"`
+	ChatName     string  `json:"chat_name"`
+	SenderJID    string  `json:"sender_jid"`
+	SenderName   string  `json:"sender_name"`
+	IsGroup      bool    `json:"is_group"`
+	IsMuted      bool    `json:"is_muted"`
+	IsReplyToMe  bool    `json:"is_reply_to_me"`
+	MessageType  string  `json:"message_type"`
+	Text         string  `json:"text"`
+	MediaFile    *string `json:"media_file"`
+	OriginalText *string `json:"original_text"`
+	IsDeleted    bool    `json:"is_deleted"`
 }
 
 func (a *App) handleMessage(msg *events.Message) {
-	if msg.Info.IsFromMe {
+	vlogf("handleMessage id=%s chat=%s sender=%s pushname=%q isGroup=%v isFromMe=%v isEdit=%v isEphemeral=%v isViewOnce=%v retry=%d",
+		msg.Info.ID, msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.PushName,
+		msg.Info.IsGroup, msg.Info.IsFromMe, msg.IsEdit, msg.IsEphemeral, msg.IsViewOnce, msg.RetryCount)
+	vlogf("  message payload: %s", protoDump(msg.Message))
+	vlogf("  raw payload:     %s", protoDump(msg.RawMessage))
+	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil {
+		vlogf("  protocolMessage type=%v key=%s", protoMsg.GetType(), protoDump(protoMsg.GetKey()))
+		if edited := protoMsg.GetEditedMessage(); edited != nil {
+			vlogf("  protocolMessage.editedMessage: %s", protoDump(edited))
+		}
+		switch protoMsg.GetType() {
+		case waE2E.ProtocolMessage_MESSAGE_EDIT:
+			a.handleEdit(msg, protoMsg)
+		case waE2E.ProtocolMessage_REVOKE:
+			a.handleRevoke(msg, protoMsg)
+		default:
+			vlogf("  protocolMessage type %v not handled; skipping save", protoMsg.GetType())
+		}
 		return
 	}
 
 	chatJID := msg.Info.Chat
 
 	if chatJID.Server == "broadcast" && !a.config.IncludeStatusMessages {
+		vlogf("  dropped: broadcast/status message")
 		return
 	}
 
@@ -112,10 +132,12 @@ func (a *App) handleMessage(msg *events.Message) {
 	isReplyToMe := a.isReplyToMe(msg)
 
 	if isMuted && !isMentioned && !isReplyToMe && !a.config.IncludeMutedMessages {
+		vlogf("  dropped: muted chat, not mentioned/reply-to-me")
 		return
 	}
 
 	if isArchived && !isMentioned && !isReplyToMe {
+		vlogf("  dropped: archived chat, not mentioned/reply-to-me")
 		return
 	}
 
@@ -167,6 +189,58 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	a.broadcastMessage(message)
+}
+
+func (a *App) handleEdit(msg *events.Message, protoMsg *waE2E.ProtocolMessage) {
+	targetID := protoMsg.GetKey().GetID()
+	edited := protoMsg.GetEditedMessage()
+	if targetID == "" || edited == nil {
+		vlogf("  edit missing key.ID or editedMessage; skipping")
+		return
+	}
+
+	_, newText := extractMessage(edited)
+	newText = a.resolveMentions(newText, edited)
+
+	res, err := a.msgDB.Exec(
+		`UPDATE messages
+		 SET original_text = COALESCE(original_text, text), text = ?
+		 WHERE message_id = ?`,
+		newText, targetID,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to apply edit for %s: %v\n", targetID, err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	vlogf("  applied edit: target=%s newText=%q rows=%d", targetID, newText, n)
+	if n == 0 {
+		return
+	}
+	a.broadcastMessageUpdate(targetID)
+}
+
+func (a *App) handleRevoke(msg *events.Message, protoMsg *waE2E.ProtocolMessage) {
+	targetID := protoMsg.GetKey().GetID()
+	if targetID == "" {
+		vlogf("  revoke missing key.ID; skipping")
+		return
+	}
+
+	res, err := a.msgDB.Exec(
+		`UPDATE messages SET is_deleted = 1 WHERE message_id = ?`,
+		targetID,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to apply revoke for %s: %v\n", targetID, err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	vlogf("  applied revoke: target=%s rows=%d", targetID, n)
+	if n == 0 {
+		return
+	}
+	a.broadcastMessageUpdate(targetID)
 }
 
 func (a *App) saveMessage(msg *Message) error {
