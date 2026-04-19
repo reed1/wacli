@@ -269,6 +269,7 @@ class WaCLIApp(App):
                     message_type=data.get("message_type", ""),
                     text=data["text"],
                     media_file=data.get("media_file"),
+                    is_from_me=data.get("is_from_me", False),
                 )
                 log(f"listen_socket: parsed message: {entry.text}")
             else:
@@ -299,6 +300,7 @@ class WaCLIApp(App):
                     message_type=msg.get("message_type", ""),
                     text=msg["text"],
                     media_file=msg.get("media_file"),
+                    is_from_me=msg.get("is_from_me", False),
                 )
             )
         calls: list[Entry] = []

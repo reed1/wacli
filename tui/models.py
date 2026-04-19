@@ -17,6 +17,7 @@ class Message:
     message_type: str
     text: str
     media_file: str | None = None
+    is_from_me: bool = False
 
     @property
     def formatted_time(self) -> str:
@@ -25,6 +26,10 @@ class Message:
 
     @property
     def title(self) -> str:
+        if self.is_from_me:
+            if self.is_group:
+                return f"→ 👥 {self.chat_name}"
+            return f"→ {self.chat_name}"
         prefix = "↩ " if self.is_reply_to_me else ""
         return f"{prefix}{self.sender_name}"
 

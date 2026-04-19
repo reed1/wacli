@@ -40,7 +40,7 @@ def format_entry_plain(entry: "Entry") -> str:
     if isinstance(entry, Message):
         text = strip_mentions(entry.text).replace("\n", " ")
         type_prefix = f"[{entry.message_type}] " if entry.message_type else ""
-        if entry.is_group:
+        if entry.is_group and not entry.is_from_me:
             return f"[{entry.formatted_time}] {entry.title} | {entry.chat_name}: {type_prefix}{text}"
         return f"[{entry.formatted_time}] {entry.title}: {type_prefix}{text}"
     return f"[{entry.formatted_time}] {entry.title}: Incoming call"
@@ -81,7 +81,7 @@ class EntryWidget(Static):
                 content = text_oneline
             # Don't use rich.markup.escape() — it skips uppercase tags like [RUN]
             sender = highlight_plain(msg.title, query)
-            if msg.is_group:
+            if msg.is_group and not msg.is_from_me:
                 chat = highlight_plain(msg.chat_name, query)
                 title = f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
             else:

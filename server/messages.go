@@ -127,17 +127,18 @@ func (a *App) handleMessage(msg *events.Message) {
 		return
 	}
 
+	isFromMe := msg.Info.IsFromMe
 	isMuted := a.isMuted(chatJID)
 	isArchived := a.isArchived(chatJID)
 	isMentioned := a.isMentioned(msg)
 	isReplyToMe := a.isReplyToMe(msg)
 
-	if isMuted && !isMentioned && !isReplyToMe && !a.config.IncludeMutedMessages {
+	if isMuted && !isMentioned && !isReplyToMe && !isFromMe && !a.config.IncludeMutedMessages {
 		vlogf("  dropped: muted chat, not mentioned/reply-to-me")
 		return
 	}
 
-	if isArchived && !isMentioned && !isReplyToMe {
+	if isArchived && !isMentioned && !isReplyToMe && !isFromMe {
 		vlogf("  dropped: archived chat, not mentioned/reply-to-me")
 		return
 	}
@@ -179,7 +180,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		IsGroup:     msg.Info.IsGroup,
 		IsMuted:     isMuted,
 		IsReplyToMe: isReplyToMe,
-		IsFromMe:    msg.Info.IsFromMe,
+		IsFromMe:    isFromMe,
 		MessageType: msgType,
 		Text:        text,
 		MediaFile:   mediaFile,
@@ -398,8 +399,11 @@ func (a *App) getSenderName(msg *events.Message) string {
 }
 
 func (a *App) getChatName(msg *events.Message) string {
-	chatJID := msg.Info.Chat
-	if msg.Info.IsGroup {
+	return a.resolveChatName(msg.Info.Chat)
+}
+
+func (a *App) resolveChatName(chatJID types.JID) string {
+	if chatJID.Server == types.GroupServer {
 		groupInfo, err := a.client.GetGroupInfo(a.ctx, chatJID)
 		if err == nil {
 			return groupInfo.Name
@@ -415,4 +419,39 @@ func (a *App) getChatName(msg *events.Message) string {
 		}
 	}
 	return chatJID.User
+}
+
+func (a *App) recordOutgoing(chatJID types.JID, messageID string, timestamp time.Time, msgType, text string) {
+	myJID := a.client.Store.ID
+	if myJID == nil {
+		return
+	}
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+
+	senderName := a.client.Store.PushName
+	if senderName == "" {
+		senderName = myJID.User
+	}
+
+	message := &Message{
+		MessageID:   messageID,
+		Timestamp:   timestamp.Unix(),
+		ChatJID:     chatJID.String(),
+		ChatName:    a.resolveChatName(chatJID),
+		SenderJID:   myJID.ToNonAD().String(),
+		SenderName:  senderName,
+		IsGroup:     chatJID.Server == types.GroupServer,
+		IsMuted:     a.isMuted(chatJID),
+		IsFromMe:    true,
+		MessageType: msgType,
+		Text:        text,
+	}
+
+	if err := a.saveMessage(message); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save outgoing message: %v\n", err)
+		return
+	}
+	a.broadcastMessage(message)
 }

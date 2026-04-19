@@ -551,12 +551,13 @@ func (a *App) sendMessage(chatJID string, text string) error {
 		Conversation: proto.String(text),
 	}
 
-	_, err = a.client.SendMessage(a.ctx, jid, msg)
+	resp, err := a.client.SendMessage(a.ctx, jid, msg)
 	if err != nil {
 		return fmt.Errorf("send failed: %w", err)
 	}
 
 	fmt.Printf("Sent message to %s\n", chatJID)
+	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text)
 	return nil
 }
 
@@ -576,12 +577,13 @@ func (a *App) replyToMessage(chatJID string, messageID string, senderJID string,
 		},
 	}
 
-	_, err = a.client.SendMessage(a.ctx, jid, msg)
+	resp, err := a.client.SendMessage(a.ctx, jid, msg)
 	if err != nil {
 		return fmt.Errorf("reply failed: %w", err)
 	}
 
 	fmt.Printf("Replied to message %s in %s\n", messageID, chatJID)
+	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text)
 	return nil
 }
 
