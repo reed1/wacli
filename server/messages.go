@@ -90,6 +90,7 @@ type Message struct {
 	IsGroup      bool    `json:"is_group"`
 	IsMuted      bool    `json:"is_muted"`
 	IsReplyToMe  bool    `json:"is_reply_to_me"`
+	IsFromMe     bool    `json:"is_from_me"`
 	MessageType  string  `json:"message_type"`
 	Text         string  `json:"text"`
 	MediaFile    *string `json:"media_file"`
@@ -178,6 +179,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		IsGroup:     msg.Info.IsGroup,
 		IsMuted:     isMuted,
 		IsReplyToMe: isReplyToMe,
+		IsFromMe:    msg.Info.IsFromMe,
 		MessageType: msgType,
 		Text:        text,
 		MediaFile:   mediaFile,

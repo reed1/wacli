@@ -63,6 +63,8 @@ def main():
                 event = json.loads(line)
                 event_type = event["type"]
                 if event_type == "message":
+                    if event["data"].get("is_from_me"):
+                        continue
                     send_attention()
                 elif event_type == "connection_state":
                     connected = event["data"]["connected"]

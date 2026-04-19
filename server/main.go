@@ -237,6 +237,7 @@ func initMessageDB() (*sql.DB, error) {
 			is_group INTEGER NOT NULL,
 			is_muted INTEGER NOT NULL,
 			is_reply_to_me INTEGER NOT NULL,
+			is_from_me INTEGER NOT NULL DEFAULT 0,
 			message_type TEXT NOT NULL DEFAULT '',
 			text TEXT NOT NULL,
 			media_file TEXT,
@@ -260,10 +261,6 @@ func initMessageDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	db.Exec("ALTER TABLE messages ADD COLUMN media_file TEXT")
-	db.Exec("ALTER TABLE messages ADD COLUMN original_text TEXT")
-	db.Exec("ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
 
 	_, err = db.Exec("VACUUM")
 	if err != nil {
@@ -442,13 +439,13 @@ func (a *App) broadcastMessage(msg *Message) {
 
 func (a *App) broadcastMessageUpdate(messageID string) {
 	var msg Message
-	var isGroup, isMuted, isReplyToMe, isDeleted int
+	var isGroup, isMuted, isReplyToMe, isFromMe, isDeleted int
 	err := a.msgDB.QueryRow(
-		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file, original_text, is_deleted
+		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, original_text, is_deleted
 		 FROM messages WHERE message_id = ?`,
 		messageID,
 	).Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName,
-		&isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted)
+		&isGroup, &isMuted, &isReplyToMe, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load updated message %s: %v\n", messageID, err)
 		return
@@ -456,6 +453,7 @@ func (a *App) broadcastMessageUpdate(messageID string) {
 	msg.IsGroup = isGroup != 0
 	msg.IsMuted = isMuted != 0
 	msg.IsReplyToMe = isReplyToMe != 0
+	msg.IsFromMe = isFromMe != 0
 	msg.IsDeleted = isDeleted != 0
 
 	event := SocketEvent{Type: "message_updated", Data: &msg}
@@ -496,7 +494,7 @@ type EntriesData struct {
 }
 
 func (a *App) sendEntries(state *connState) error {
-	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, message_type, text, media_file, original_text, is_deleted FROM messages ORDER BY timestamp")
+	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, original_text, is_deleted FROM messages ORDER BY timestamp")
 	if err != nil {
 		return err
 	}
@@ -505,13 +503,14 @@ func (a *App) sendEntries(state *connState) error {
 	var messages []Message
 	for rows.Next() {
 		var msg Message
-		var isGroup, isMuted, isReplyToMe, isDeleted int
-		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted); err != nil {
+		var isGroup, isMuted, isReplyToMe, isFromMe, isDeleted int
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted); err != nil {
 			return err
 		}
 		msg.IsGroup = isGroup != 0
 		msg.IsMuted = isMuted != 0
 		msg.IsReplyToMe = isReplyToMe != 0
+		msg.IsFromMe = isFromMe != 0
 		msg.IsDeleted = isDeleted != 0
 		messages = append(messages, msg)
 	}
