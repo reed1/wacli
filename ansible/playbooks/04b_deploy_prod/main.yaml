@@ -1,7 +1,5 @@
 - name: Deploy wacli server
   hosts: prod_servers
-  vars:
-    ansible_become_pass: "{{ lookup('pipe', 'rpass get personal/hosts/sgtent/ssh') }}"
   tasks:
     - name: Deploy .env file
       ansible.builtin.template:

@@ -61,16 +61,16 @@ type Config struct {
 }
 
 type App struct {
-	client       *whatsmeow.Client
-	ctx          context.Context
-	msgDB        *sql.DB
-	waDB         *sql.DB
-	config       Config
-	socketConns  map[net.Conn]*connState
-	connMu       sync.RWMutex
-	waConnected  bool
-	waReason     string
-	stateMu      sync.RWMutex
+	client      *whatsmeow.Client
+	ctx         context.Context
+	msgDB       *sql.DB
+	waDB        *sql.DB
+	config      Config
+	socketConns map[net.Conn]*connState
+	connMu      sync.RWMutex
+	waConnected bool
+	waReason    string
+	stateMu     sync.RWMutex
 }
 
 type connState struct {
@@ -592,12 +592,13 @@ func (a *App) loginWithQR() error {
 	}
 
 	for evt := range qrChan {
-		if evt.Event == "code" {
+		switch evt.Event {
+		case "code":
 			fmt.Println("Scan this QR code to login:")
 			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-		} else if evt.Event == "success" {
+		case "success":
 			fmt.Println("Login successful")
-		} else {
+		default:
 			panic(fmt.Sprintf("Login failed: %s", evt.Event))
 		}
 	}
