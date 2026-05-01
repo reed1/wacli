@@ -276,10 +276,11 @@ class WaCLIApp(App):
                 raise ValueError(f"Unexpected entry type: {entry_type}")
             self.entries.append(entry)
             message_list = self.query_one(MessageList)
-            was_at_end = self.selected_index == len(self.entries) - 2
-            message_list.mount(EntryWidget(entry, selected=was_at_end))
-            if was_at_end:
-                self.update_selection(len(self.entries) - 1)
+            force_follow = isinstance(entry, Message) and entry.is_from_me
+            should_follow = force_follow or self.selected_index == len(self.entries) - 2
+            message_list.mount(EntryWidget(entry, selected=should_follow))
+            if should_follow:
+                self.call_after_refresh(lambda: self.update_selection(len(self.entries) - 1))
             log("listen_socket: widget mounted")
 
     def load_entries_from_data(self, data: dict) -> None:
