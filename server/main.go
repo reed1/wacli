@@ -169,9 +169,11 @@ func main() {
 		runDaemon(app)
 	case "login":
 		runLogin(app)
+	case "logout":
+		runLogout(app)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-		fmt.Fprintf(os.Stderr, "Usage: wacli [daemon|login]\n")
+		fmt.Fprintf(os.Stderr, "Usage: wacli [daemon|login|logout]\n")
 		os.Exit(1)
 	}
 }
@@ -217,6 +219,20 @@ func runLogin(app *App) {
 	}
 
 	fmt.Println("Login complete. You can now run 'wacli daemon' or start the systemd service.")
+}
+
+func runLogout(app *App) {
+	if app.client.Store.ID == nil {
+		fmt.Println("Device not logged in.")
+		os.Exit(0)
+	}
+
+	if err := app.client.Store.Delete(app.ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Logout failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Logged out. Run 'wacli login' to re-pair.")
 }
 
 func initMessageDB() (*sql.DB, error) {
