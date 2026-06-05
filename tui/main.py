@@ -10,7 +10,7 @@ from tui.app import WaCLIApp
 from tui.utils import RUNTIME_DIR
 
 
-def main() -> int:
+def main() -> int | None:
     parser = argparse.ArgumentParser(description="WhatsApp TUI")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -32,7 +32,7 @@ def main() -> int:
     finally:
         if args.verbose:
             print(f"Log file: {log_file}", file=sys.stderr)
-    return 0
+    return app.return_code
 
 
 if __name__ == "__main__":
