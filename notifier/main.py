@@ -30,6 +30,13 @@ def wait_for_server():
     sys.exit(1)
 
 
+def enable_keepalive(sock):
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
+
+
 def send_attention():
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(RWORKSPACES_SOCKET)
@@ -48,6 +55,7 @@ def main():
     wait_for_server()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect(SERVER_ADDR)
+        enable_keepalive(sock)
         print("Connected to wacli server, listening for events...")
 
         buffer = ""
