@@ -13,13 +13,17 @@ import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Provider
+from textual.notifications import Notification, Notify
 from textual.widgets import Header
 
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
+
+CLIPBOARD_IMAGE_PATH = RUNTIME_DIR / "clipboard_send.png"
 from tui.widgets import (
     ComposeInput,
     ComposeQuote,
+    ConfirmModal,
     EntryWidget,
     MessageList,
     MessageModal,
@@ -130,12 +134,16 @@ class WaCLIApp(App):
     MessageModal {
         layer: above;
     }
+    ConfirmModal {
+        layer: above;
+    }
     """
 
     COMMANDS = {WaCLICommands}
     PALETTE_COMMANDS = [
         PaletteCommand("Send message", "compose_send", "Compose a message to the selected chat"),
         PaletteCommand("Reply", "compose_reply", "Reply to the selected message"),
+        PaletteCommand("Send image", "send_image", "Send the clipboard image to the selected chat"),
         PaletteCommand("Copy", "copy_message", "Copy the selected message to the clipboard"),
         PaletteCommand("View", "show_message", "Open the selected message or its media"),
         PaletteCommand("Open URL", "open_url", "Open links found in the selected message"),
@@ -157,6 +165,7 @@ class WaCLIApp(App):
         Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
         Binding("enter", "compose_send", "Send", show=False),
         Binding("r", "compose_reply", "Reply"),
+        Binding("I", "send_image", "Send image"),
         Binding("y", "copy_message", "Copy"),
         Binding("H", "show_message", "View"),
         Binding("slash", "open_search", "Search"),
@@ -179,6 +188,8 @@ class WaCLIApp(App):
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
         self.pending_request_id: str | None = None
+        self.pending_image_chat: tuple[str, str] | None = None
+        self.pending_image_toast: Notification | None = None
         self.media_assemblers: dict[str, MediaAssembler] = {}
         self._chord_buf: str = ""
         self._chord_timer: asyncio.TimerHandle | None = None
@@ -198,6 +209,7 @@ class WaCLIApp(App):
         yield ComposeQuote()
         yield ComposeInput()
         yield MessageModal()
+        yield ConfirmModal()
         yield SearchInput()
         yield StatusBar("")
 
@@ -257,8 +269,15 @@ class WaCLIApp(App):
                     self.pending_request_id = None
                     if event["success"]:
                         self.hide_compose()
+                        if self.pending_image_toast is not None:
+                            self.dismiss_image_toast()
+                            self.notify("Image sent")
                     else:
-                        self.exit(return_code=1, message=f"Send failed: {event.get('error', 'unknown error')}")
+                        self.dismiss_image_toast()
+                        self.exit(
+                            return_code=1,
+                            message=f"Send failed: {event.get('error', 'unknown error')}",
+                        )
                 continue
 
             if entry_type == "media":
@@ -425,7 +444,9 @@ class WaCLIApp(App):
             self.notify("No URL found")
             return
         for url in urls:
-            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                ["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
         self.notify(f"Opened {len(urls)} URL(s)")
 
     def get_selected_entry(self) -> Entry | None:
@@ -461,6 +482,79 @@ class WaCLIApp(App):
         compose_input.border_title = f"Reply to {entry.sender_name}"
         compose_input.add_class("visible")
         compose_input.focus()
+
+    def action_send_image(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        if not self.socket_writer:
+            self.exit(return_code=1, message="Not connected to socket")
+            return
+
+        try:
+            result = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                capture_output=True,
+                timeout=5,
+            )
+        except FileNotFoundError:
+            self.notify("xclip not found", severity="error")
+            return
+        except subprocess.TimeoutExpired:
+            self.notify("Reading clipboard timed out", severity="error")
+            return
+
+        if result.returncode != 0 or not result.stdout:
+            self.notify("No image in clipboard", severity="error")
+            return
+
+        CLIPBOARD_IMAGE_PATH.write_bytes(result.stdout)
+        subprocess.Popen(
+            ["feh", str(CLIPBOARD_IMAGE_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+
+        self.pending_image_chat = (entry.chat_jid, entry.chat_name)
+        confirm = self.query_one(ConfirmModal)
+        confirm.border_title = "Send image"
+        confirm.update(f"Send this image to {entry.chat_name}? \\[Y/n]")
+        confirm.add_class("visible")
+        confirm.focus()
+
+    def confirm_send_image(self) -> None:
+        self.query_one(ConfirmModal).remove_class("visible")
+        self.set_focus(None)
+        pending = self.pending_image_chat
+        self.pending_image_chat = None
+        if not pending or not self.socket_writer:
+            return
+
+        chat_jid, chat_name = pending
+        image_b64 = base64.b64encode(CLIPBOARD_IMAGE_PATH.read_bytes()).decode()
+        request_id = str(uuid.uuid4())
+        self.pending_request_id = request_id
+        payload = {
+            "action": "send_image",
+            "request_id": request_id,
+            "chat_jid": chat_jid,
+            "image_data": image_b64,
+        }
+        log(f"Sending image to {chat_jid} ({len(image_b64)} b64 chars)")
+        log_submitted_message(chat_jid, "[image]", "send_image")
+        self.socket_writer.write((json.dumps(payload) + "\n").encode())
+        self.run_worker(self.socket_writer.drain())
+        self.pending_image_toast = Notification(f"Sending image to {chat_name}…", timeout=60)
+        self.post_message(Notify(self.pending_image_toast))
+
+    def dismiss_image_toast(self) -> None:
+        if self.pending_image_toast is not None:
+            self._unnotify(self.pending_image_toast)
+            self.pending_image_toast = None
+
+    def cancel_send_image(self) -> None:
+        self.query_one(ConfirmModal).remove_class("visible")
+        self.set_focus(None)
+        self.pending_image_chat = None
+        self.notify("Image send cancelled")
 
     def hide_compose(self) -> None:
         compose_input = self.query_one(ComposeInput)
@@ -541,7 +635,9 @@ class WaCLIApp(App):
         self.media_assemblers[request_id] = MediaAssembler(future, local_path)
 
         try:
-            payload = json.dumps({"action": "get_media", "request_id": request_id, "filename": media_file})
+            payload = json.dumps(
+                {"action": "get_media", "request_id": request_id, "filename": media_file}
+            )
             self.socket_writer.write((payload + "\n").encode())
             await self.socket_writer.drain()
             await future
@@ -550,7 +646,9 @@ class WaCLIApp(App):
             self.notify("Media could not be fetched", severity="error")
             return
 
-        subprocess.Popen([viewer, str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            [viewer, str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
 
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)
@@ -581,7 +679,9 @@ class WaCLIApp(App):
             self.clear_search()
             return
         needle = query.lower()
-        matches = [i for i, entry in enumerate(self.entries) if needle in format_entry_plain(entry).lower()]
+        matches = [
+            i for i, entry in enumerate(self.entries) if needle in format_entry_plain(entry).lower()
+        ]
         self.search_query = query
         self.search_matches = matches
         for widget in self.query(EntryWidget):
@@ -591,7 +691,9 @@ class WaCLIApp(App):
             self.set_status(f"0/0 for '{query}'")
             return
         cur = self.selected_index
-        idx = next((k for k in range(len(matches) - 1, -1, -1) if matches[k] <= cur), len(matches) - 1)
+        idx = next(
+            (k for k in range(len(matches) - 1, -1, -1) if matches[k] <= cur), len(matches) - 1
+        )
         self.search_index = idx
         self.update_selection(matches[idx])
         self.set_status(f"{idx + 1}/{len(matches)} for '{query}'")

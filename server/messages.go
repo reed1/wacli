@@ -421,7 +421,7 @@ func (a *App) resolveChatName(chatJID types.JID) string {
 	return chatJID.User
 }
 
-func (a *App) recordOutgoing(chatJID types.JID, messageID string, timestamp time.Time, msgType, text string) {
+func (a *App) recordOutgoing(chatJID types.JID, messageID string, timestamp time.Time, msgType, text string, mediaFile *string) {
 	myJID := a.client.Store.ID
 	if myJID == nil {
 		return
@@ -447,6 +447,7 @@ func (a *App) recordOutgoing(chatJID types.JID, messageID string, timestamp time
 		IsFromMe:    true,
 		MessageType: msgType,
 		Text:        text,
+		MediaFile:   mediaFile,
 	}
 
 	if err := a.saveMessage(message); err != nil {

@@ -191,6 +191,42 @@ class MessageModal(Static):
         self.app.hide_message_modal()
 
 
+class ConfirmModal(Static):
+    DEFAULT_CSS = """
+    ConfirmModal {
+        display: none;
+        width: auto;
+        max-width: 60%;
+        padding: 1 2;
+        border: tall $warning;
+        background: $surface;
+    }
+    ConfirmModal.visible {
+        display: block;
+    }
+    """
+
+    BINDINGS = [
+        Binding("y", "confirm", "Yes", show=False),
+        Binding("enter", "confirm", "Yes", show=False),
+        Binding("n", "cancel", "No", show=False),
+        Binding("escape", "cancel", "No", show=False),
+        Binding("q", "cancel", "No", show=False),
+    ]
+
+    app: "WaCLIApp"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.can_focus = True
+
+    def action_confirm(self) -> None:
+        self.app.confirm_send_image()
+
+    def action_cancel(self) -> None:
+        self.app.cancel_send_image()
+
+
 class StatusBar(Static):
     DEFAULT_CSS = """
     StatusBar {

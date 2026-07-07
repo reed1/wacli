@@ -50,6 +50,9 @@ const (
 	maxEntries               = 200
 	trimToCount              = 150
 	permanentFailureExitCode = 2
+	// Upper bound for a single newline-delimited socket command. Large enough
+	// to carry a base64-encoded image sent from the TUI.
+	maxSocketLine = 32 * 1024 * 1024
 )
 
 type Config struct {
@@ -313,6 +316,7 @@ type SocketCommand struct {
 	SenderJID string `json:"sender_jid"`
 	Text      string `json:"text"`
 	Filename  string `json:"filename"`
+	ImageData string `json:"image_data"`
 }
 
 type SocketResponse struct {
@@ -339,6 +343,7 @@ func (a *App) handleSocketConn(conn net.Conn) {
 	a.sendConnectionState(state)
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSocketLine)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		vlogf("socket <- %s: %s", conn.RemoteAddr(), string(line))
@@ -359,6 +364,12 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			err := a.replyToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
+			}
+			a.sendResponse(state, cmd.RequestID, err)
+		case "send_image":
+			err := a.sendImage(cmd.ChatJID, cmd.ImageData)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to send image: %v\n", err)
 			}
 			a.sendResponse(state, cmd.RequestID, err)
 		case "get_entries":
@@ -573,7 +584,7 @@ func (a *App) sendMessage(chatJID string, text string) error {
 	}
 
 	fmt.Printf("Sent message to %s\n", chatJID)
-	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text)
+	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text, nil)
 	return nil
 }
 
@@ -599,7 +610,7 @@ func (a *App) replyToMessage(chatJID string, messageID string, senderJID string,
 	}
 
 	fmt.Printf("Replied to message %s in %s\n", messageID, chatJID)
-	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text)
+	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text, nil)
 	return nil
 }
 

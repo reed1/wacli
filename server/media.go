@@ -4,12 +4,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -49,6 +53,72 @@ func (a *App) downloadMedia(dl whatsmeow.DownloadableMessage, mimetype string) (
 	}
 
 	return filename, nil
+}
+
+func (a *App) sendImage(chatJID string, imageDataB64 string) error {
+	jid, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid JID: %w", err)
+	}
+
+	data, err := base64.StdEncoding.DecodeString(imageDataB64)
+	if err != nil {
+		return fmt.Errorf("decode image data: %w", err)
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("empty image data")
+	}
+
+	mimetype := http.DetectContentType(data)
+
+	uploaded, err := a.client.Upload(a.ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			Mimetype:      proto.String(mimetype),
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+		},
+	}
+
+	resp, err := a.client.SendMessage(a.ctx, jid, msg)
+	if err != nil {
+		return fmt.Errorf("send failed: %w", err)
+	}
+
+	mediaFile, err := a.saveOutgoingMedia(data, mimetype)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save outgoing image locally: %v\n", err)
+	}
+
+	fmt.Printf("Sent image to %s\n", chatJID)
+	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "image", "", mediaFile)
+	return nil
+}
+
+func (a *App) saveOutgoingMedia(data []byte, mimetype string) (*string, error) {
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+
+	ext := mimeExtensions[mimetype]
+	if ext == "" {
+		ext = ".bin"
+	}
+	filename := uuid.NewString() + ext
+
+	if err := os.WriteFile(filepath.Join(mediaDir, filename), data, 0644); err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+
+	return &filename, nil
 }
 
 type MediaResponse struct {
