@@ -6,11 +6,13 @@ import subprocess
 import uuid
 
 from collections import namedtuple
+from functools import partial
 from pathlib import Path
 
 import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Provider
 from textual.widgets import Header
 
 from tui.models import Call, Entry, Message
@@ -81,6 +83,31 @@ class MediaAssembler:
             self.future.set_exception(RuntimeError(msg))
 
 
+PaletteCommand = namedtuple("PaletteCommand", ["title", "action", "help"])
+
+
+class WaCLICommands(Provider):
+    @property
+    def _commands(self) -> list[PaletteCommand]:
+        return self.app.PALETTE_COMMANDS
+
+    async def discover(self):
+        for cmd in self._commands:
+            yield DiscoveryHit(cmd.title, partial(self.app.run_action, cmd.action), help=cmd.help)
+
+    async def search(self, query: str):
+        matcher = self.matcher(query)
+        for cmd in self._commands:
+            score = matcher.match(cmd.title)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(cmd.title),
+                    partial(self.app.run_action, cmd.action),
+                    help=cmd.help,
+                )
+
+
 class WaCLIApp(App):
     CSS = """
     Screen {
@@ -105,8 +132,24 @@ class WaCLIApp(App):
     }
     """
 
+    COMMANDS = {WaCLICommands}
+    PALETTE_COMMANDS = [
+        PaletteCommand("Send message", "compose_send", "Compose a message to the selected chat"),
+        PaletteCommand("Reply", "compose_reply", "Reply to the selected message"),
+        PaletteCommand("Copy", "copy_message", "Copy the selected message to the clipboard"),
+        PaletteCommand("View", "show_message", "Open the selected message or its media"),
+        PaletteCommand("Open URL", "open_url", "Open links found in the selected message"),
+        PaletteCommand("Search", "open_search", "Search messages"),
+        PaletteCommand("Top", "select_first", "Jump to the first entry"),
+        PaletteCommand("Bottom", "select_last", "Jump to the last entry"),
+        PaletteCommand("Half page down", "half_page_down", "Move the selection down half a page"),
+        PaletteCommand("Half page up", "half_page_up", "Move the selection up half a page"),
+        PaletteCommand("Quit", "quit", "Exit wacli"),
+    ]
+
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("space", "command_palette", "Commands"),
         Binding("j", "select_next", "Down", show=False),
         Binding("k", "select_prev", "Up", show=False),
         Binding("G", "select_last", "Bottom", show=False),
