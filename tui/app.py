@@ -122,6 +122,7 @@ class WaCLIApp(App):
         height: 1fr;
         width: 100%;
         scrollbar-gutter: stable;
+        scrollbar-size-vertical: 1;
     }
     ComposeQuote {
         layer: above;
