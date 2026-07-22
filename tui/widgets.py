@@ -13,7 +13,9 @@ MENTION_RE = re.compile(r'<mention jid="[^"]*" name="([^"]*)"/>')
 def _highlight(escaped: str, query: str) -> str:
     if not query:
         return escaped
-    return re.compile(re.escape(query), re.IGNORECASE).sub(lambda m: f"[reverse]{m.group(0)}[/reverse]", escaped)
+    return re.compile(re.escape(query), re.IGNORECASE).sub(
+        lambda m: f"[reverse]{m.group(0)}[/reverse]", escaped
+    )
 
 
 def render_mentions(text: str, search_query: str = "") -> str:
@@ -41,7 +43,9 @@ def format_entry_plain(entry: "Entry") -> str:
         text = strip_mentions(entry.text).replace("\n", " ")
         type_prefix = f"[{entry.message_type}] " if entry.message_type else ""
         if entry.is_group and not entry.is_from_me:
-            return f"[{entry.formatted_time}] {entry.title} | {entry.chat_name}: {type_prefix}{text}"
+            return (
+                f"[{entry.formatted_time}] {entry.title} | {entry.chat_name}: {type_prefix}{text}"
+            )
         return f"[{entry.formatted_time}] {entry.title}: {type_prefix}{text}"
     return f"[{entry.formatted_time}] {entry.title}: Incoming call"
 
@@ -75,10 +79,13 @@ class EntryWidget(Static):
         if isinstance(self.entry, Message):
             msg = self.entry
             text_oneline = render_mentions(msg.text.replace("\n", " "), query)
-            if msg.message_type:
-                content = f"[dim]\\[{msg.message_type}][/] {text_oneline}"
+            type_prefix = f"[dim]\\[{msg.message_type}][/] " if msg.message_type else ""
+            if msg.is_deleted:
+                content = f"{type_prefix}[dim]🗑 [strike]{text_oneline}[/strike][/dim]"
+            elif msg.is_edited:
+                content = f"{type_prefix}[dim]✎[/dim] {text_oneline}"
             else:
-                content = text_oneline
+                content = f"{type_prefix}{text_oneline}"
             # Don't use rich.markup.escape() — it skips uppercase tags like [RUN]
             sender = highlight_plain(msg.title, query)
             if msg.is_group and not msg.is_from_me:
@@ -89,7 +96,9 @@ class EntryWidget(Static):
             return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {content}"
         call = self.entry
         title = highlight_plain(call.title, query)
-        return f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {title}[/]: Incoming call"
+        return (
+            f"{indicator} [dim]{call.formatted_time}[/][bold yellow] 📞 {title}[/]: Incoming call"
+        )
 
 
 class MessageList(ScrollableContainer):

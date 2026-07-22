@@ -18,6 +18,12 @@ class Message:
     text: str
     media_file: str | None = None
     is_from_me: bool = False
+    original_text: str | None = None
+    is_deleted: bool = False
+
+    @property
+    def is_edited(self) -> bool:
+        return self.original_text is not None
 
     @property
     def formatted_time(self) -> str:

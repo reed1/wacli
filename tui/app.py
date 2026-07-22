@@ -87,6 +87,27 @@ class MediaAssembler:
             self.future.set_exception(RuntimeError(msg))
 
 
+def message_from_data(data: dict) -> Message:
+    return Message(
+        id=data.get("id", 0),
+        message_id=data.get("message_id", ""),
+        timestamp=data["timestamp"],
+        chat_jid=data["chat_jid"],
+        chat_name=data["chat_name"],
+        sender_jid=data["sender_jid"],
+        sender_name=data["sender_name"],
+        is_group=data["is_group"],
+        is_muted=data["is_muted"],
+        is_reply_to_me=data["is_reply_to_me"],
+        message_type=data.get("message_type", ""),
+        text=data["text"],
+        media_file=data.get("media_file"),
+        is_from_me=data.get("is_from_me", False),
+        original_text=data.get("original_text"),
+        is_deleted=data.get("is_deleted", False),
+    )
+
+
 PaletteCommand = namedtuple("PaletteCommand", ["title", "action", "help"])
 
 
@@ -304,6 +325,11 @@ class WaCLIApp(App):
                 self.load_entries_from_data(data)
                 self.render_entries()
                 continue
+
+            if entry_type == "message_updated":
+                self.apply_message_update(message_from_data(data))
+                continue
+
             entry: Entry
             if entry_type == "call":
                 entry = Call(
@@ -318,22 +344,7 @@ class WaCLIApp(App):
                 )
                 log(f"listen_socket: parsed call from {entry.caller_name}")
             elif entry_type == "message":
-                entry = Message(
-                    id=data.get("id", 0),
-                    message_id=data.get("message_id", ""),
-                    timestamp=data["timestamp"],
-                    chat_jid=data["chat_jid"],
-                    chat_name=data["chat_name"],
-                    sender_jid=data["sender_jid"],
-                    sender_name=data["sender_name"],
-                    is_group=data["is_group"],
-                    is_muted=data["is_muted"],
-                    is_reply_to_me=data["is_reply_to_me"],
-                    message_type=data.get("message_type", ""),
-                    text=data["text"],
-                    media_file=data.get("media_file"),
-                    is_from_me=data.get("is_from_me", False),
-                )
+                entry = message_from_data(data)
                 log(f"listen_socket: parsed message: {entry.text}")
             else:
                 raise ValueError(f"Unexpected entry type: {entry_type}")
@@ -346,27 +357,27 @@ class WaCLIApp(App):
                 self.call_after_refresh(lambda: self.update_selection(len(self.entries) - 1))
             log("listen_socket: widget mounted")
 
+    def apply_message_update(self, message: Message) -> None:
+        index = next(
+            (
+                i
+                for i, entry in enumerate(self.entries)
+                if isinstance(entry, Message) and entry.message_id == message.message_id
+            ),
+            None,
+        )
+        if index is None:
+            log(f"apply_message_update: {message.message_id} not in view, ignoring")
+            return
+        self.entries[index] = message
+        widgets = list(self.query(EntryWidget))
+        if index < len(widgets):
+            widgets[index].entry = message
+            widgets[index].refresh()
+        log(f"apply_message_update: updated {message.message_id} deleted={message.is_deleted}")
+
     def load_entries_from_data(self, data: dict) -> None:
-        messages: list[Entry] = []
-        for msg in data.get("messages") or []:
-            messages.append(
-                Message(
-                    id=msg.get("id", 0),
-                    message_id=msg.get("message_id", ""),
-                    timestamp=msg["timestamp"],
-                    chat_jid=msg["chat_jid"],
-                    chat_name=msg["chat_name"],
-                    sender_jid=msg["sender_jid"],
-                    sender_name=msg["sender_name"],
-                    is_group=msg["is_group"],
-                    is_muted=msg["is_muted"],
-                    is_reply_to_me=msg["is_reply_to_me"],
-                    message_type=msg.get("message_type", ""),
-                    text=msg["text"],
-                    media_file=msg.get("media_file"),
-                    is_from_me=msg.get("is_from_me", False),
-                )
-            )
+        messages: list[Entry] = [message_from_data(msg) for msg in data.get("messages") or []]
         calls: list[Entry] = []
         for call in data.get("calls") or []:
             calls.append(
@@ -613,8 +624,15 @@ class WaCLIApp(App):
         if not entry or isinstance(entry, Call):
             return
         if entry.text.strip():
+            body = render_mentions(entry.text)
+            if entry.is_deleted:
+                body = f"[dim italic]🗑 deleted[/]\n\n{body}"
+            if entry.is_edited:
+                body = (
+                    f"{body}\n\n[dim italic]✎ original:[/]\n{render_mentions(entry.original_text)}"
+                )
             modal = self.query_one(MessageModal)
-            modal.update(render_mentions(entry.text))
+            modal.update(body)
             modal.add_class("visible")
             modal.focus()
         if entry.media_file:
