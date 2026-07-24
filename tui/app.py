@@ -41,6 +41,10 @@ SOCKET_READ_LIMIT = 1024 * 1024
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
 
+REMOVE_REACTION_ID = "🚫"
+REACTION_EMOJIS = json.loads((Path(__file__).parent / "reaction_emojis.json").read_text())
+REACTION_EMOJIS.append({"id": REMOVE_REACTION_ID, "label": "remove clear reaction"})
+
 
 class MediaAssembler:
     def __init__(self, future: asyncio.Future, path: Path) -> None:
@@ -165,6 +169,7 @@ class WaCLIApp(App):
     PALETTE_COMMANDS = [
         PaletteCommand("Send message", "compose_send", "Compose a message to the selected chat"),
         PaletteCommand("Reply", "compose_reply", "Reply to the selected message"),
+        PaletteCommand("React", "react", "Send an emoji reaction to the selected message"),
         PaletteCommand("Send image", "send_image", "Send the clipboard image to the selected chat"),
         PaletteCommand("Copy", "copy_message", "Copy the selected message to the clipboard"),
         PaletteCommand("View", "show_message", "Open the selected message or its media"),
@@ -187,6 +192,7 @@ class WaCLIApp(App):
         Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
         Binding("enter", "compose_send", "Send", show=False),
         Binding("r", "compose_reply", "Reply"),
+        Binding("m", "react", "React"),
         Binding("I", "send_image", "Send image"),
         Binding("y", "copy_message", "Copy"),
         Binding("H", "show_message", "View"),
@@ -494,6 +500,56 @@ class WaCLIApp(App):
         compose_input.border_title = f"Reply to {entry.sender_name}"
         compose_input.add_class("visible")
         compose_input.focus()
+
+    def action_react(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        if not self.socket_writer:
+            self.exit(return_code=1, message="Not connected to socket")
+            return
+        self.run_worker(self.pick_and_send_reaction(entry))
+
+    async def pick_and_send_reaction(self, entry: Message) -> None:
+        menu = "\n".join(f"{e['id']} {e['label']}" for e in REACTION_EMOJIS)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "rofi",
+                "-dmenu",
+                "-i",
+                "-p",
+                "React",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            self.notify("rofi not found", severity="error")
+            return
+
+        stdout, _ = await proc.communicate(menu.encode())
+        selection = stdout.decode().strip()
+        if not selection:
+            return
+
+        emoji = selection.split(maxsplit=1)[0]
+        if emoji == REMOVE_REACTION_ID:
+            emoji = ""
+
+        request_id = str(uuid.uuid4())
+        self.pending_request_id = request_id
+        payload = {
+            "action": "react",
+            "request_id": request_id,
+            "chat_jid": entry.chat_jid,
+            "message_id": entry.message_id,
+            "sender_jid": entry.sender_jid,
+            "text": emoji,
+        }
+        log(f"Reacting to {entry.message_id} in {entry.chat_jid} with {emoji!r}")
+        self.socket_writer.write((json.dumps(payload) + "\n").encode())
+        await self.socket_writer.drain()
+        self.notify("Reaction removed" if emoji == "" else f"Reacted {emoji}")
 
     def action_send_image(self) -> None:
         entry = self.get_selected_entry()

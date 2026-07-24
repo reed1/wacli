@@ -366,6 +366,12 @@ func (a *App) handleSocketConn(conn net.Conn) {
 				fmt.Fprintf(os.Stderr, "Failed to reply to message: %v\n", err)
 			}
 			a.sendResponse(state, cmd.RequestID, err)
+		case "react":
+			err := a.reactToMessage(cmd.ChatJID, cmd.MessageID, cmd.SenderJID, cmd.Text)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to react to message: %v\n", err)
+			}
+			a.sendResponse(state, cmd.RequestID, err)
 		case "send_image":
 			err := a.sendImage(cmd.ChatJID, cmd.ImageData)
 			if err != nil {
@@ -611,6 +617,25 @@ func (a *App) replyToMessage(chatJID string, messageID string, senderJID string,
 
 	fmt.Printf("Replied to message %s in %s\n", messageID, chatJID)
 	a.recordOutgoing(jid, resp.ID, resp.Timestamp, "", text, nil)
+	return nil
+}
+
+func (a *App) reactToMessage(chatJID string, messageID string, senderJID string, emoji string) error {
+	jid, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID: %w", err)
+	}
+	sender, err := types.ParseJID(senderJID)
+	if err != nil {
+		return fmt.Errorf("invalid sender JID: %w", err)
+	}
+
+	msg := a.client.BuildReaction(jid, sender, messageID, emoji)
+	if _, err := a.client.SendMessage(a.ctx, jid, msg); err != nil {
+		return fmt.Errorf("react failed: %w", err)
+	}
+
+	fmt.Printf("Reacted to message %s in %s with %s\n", messageID, chatJID, emoji)
 	return nil
 }
 
