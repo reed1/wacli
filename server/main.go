@@ -121,7 +121,7 @@ func main() {
 
 	vlogf("verbose logging enabled; command=%s", command)
 
-	msgDB, err := initMessageDB()
+	msgDB, err := initMessageDB("file:messages.db?_foreign_keys=on")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init message database: %v\n", err)
 		os.Exit(1)
@@ -238,8 +238,8 @@ func runLogout(app *App) {
 	fmt.Println("Logged out. Run 'wacli login' to re-pair.")
 }
 
-func initMessageDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "file:messages.db?_foreign_keys=on")
+func initMessageDB(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
