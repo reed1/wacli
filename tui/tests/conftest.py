@@ -4,11 +4,20 @@ os.environ.setdefault("SERVER_HOST", "127.0.0.1")
 os.environ.setdefault("SERVER_PORT", "0")
 
 import asyncio
+import base64
+import io
 import json
 
 import pytest
+from PIL import Image
 
 from tui import app as app_module
+
+
+def png_bytes(width: int = 16, height: int = 9) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (200, 30, 90)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def make_message(**overrides) -> dict:
@@ -54,6 +63,7 @@ class StubServer:
 
     def __init__(self) -> None:
         self.entries: dict = {"messages": [], "calls": []}
+        self.media: dict[str, bytes] = {}
         self.commands: list[dict] = []
         self.writers: list[asyncio.StreamWriter] = []
         self.auto_respond = True
@@ -81,6 +91,17 @@ class StubServer:
             self._command_received.set()
             if cmd["action"] == "get_entries":
                 self._write(writer, {"type": "entries", "data": self.entries})
+            elif cmd["action"] == "get_media":
+                self._write(
+                    writer,
+                    {
+                        "type": "media",
+                        "request_id": cmd["request_id"],
+                        "seq": 0,
+                        "data": base64.b64encode(self.media[cmd["filename"]]).decode(),
+                        "done": True,
+                    },
+                )
             elif self.auto_respond and cmd.get("request_id"):
                 self._write(
                     writer,

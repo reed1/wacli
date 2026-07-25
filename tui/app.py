@@ -23,8 +23,8 @@ CLIPBOARD_IMAGE_PATH = RUNTIME_DIR / "clipboard_send.png"
 from tui.widgets import (
     ComposeInput,
     ComposeQuote,
-    ConfirmModal,
     EntryWidget,
+    ImageViewer,
     MessageList,
     MessageModal,
     SearchInput,
@@ -160,9 +160,6 @@ class WaCLIApp(App):
     MessageModal {
         layer: above;
     }
-    ConfirmModal {
-        layer: above;
-    }
     """
 
     COMMANDS = {WaCLICommands}
@@ -237,7 +234,6 @@ class WaCLIApp(App):
         yield ComposeQuote()
         yield ComposeInput()
         yield MessageModal()
-        yield ConfirmModal()
         yield SearchInput()
         yield StatusBar("")
 
@@ -577,20 +573,24 @@ class WaCLIApp(App):
             return
 
         CLIPBOARD_IMAGE_PATH.write_bytes(result.stdout)
-        subprocess.Popen(
-            ["feh", str(CLIPBOARD_IMAGE_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        self.pending_image_chat = (entry.chat_jid, entry.chat_name)
+        self.open_image_viewer(
+            CLIPBOARD_IMAGE_PATH, prompt=f"Send this image to {entry.chat_name}? \\[Y/n]"
         )
 
-        self.pending_image_chat = (entry.chat_jid, entry.chat_name)
-        confirm = self.query_one(ConfirmModal)
-        confirm.border_title = "Send image"
-        confirm.update(f"Send this image to {entry.chat_name}? \\[Y/n]")
-        confirm.add_class("visible")
-        confirm.focus()
+    def open_image_viewer(self, path: Path, prompt: str | None = None, caption: str = "") -> None:
+        self.close_image_viewer()
+        viewer = ImageViewer(path, prompt, caption)
+        self.mount(viewer)
+        self.call_after_refresh(viewer.focus)
+
+    def close_image_viewer(self) -> None:
+        for viewer in self.query(ImageViewer):
+            viewer.remove()
+        self.set_focus(None)
 
     def confirm_send_image(self) -> None:
-        self.query_one(ConfirmModal).remove_class("visible")
-        self.set_focus(None)
+        self.close_image_viewer()
         pending = self.pending_image_chat
         self.pending_image_chat = None
         if not pending or not self.socket_writer:
@@ -619,8 +619,7 @@ class WaCLIApp(App):
             self.pending_image_toast = None
 
     def cancel_send_image(self) -> None:
-        self.query_one(ConfirmModal).remove_class("visible")
-        self.set_focus(None)
+        self.close_image_viewer()
         self.pending_image_chat = None
         self.notify("Image send cancelled")
 
@@ -679,6 +678,12 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
+        # An image carries its text as a caption inside the viewer, so it replaces the
+        # text modal rather than stacking on top of it.
+        if entry.media_file and Path(entry.media_file).suffix.lower() in IMAGE_EXTS:
+            caption = render_mentions(entry.text.replace("\n", " "))
+            self.run_worker(self.open_media(entry.media_file, caption))
+            return
         if entry.text.strip():
             body = render_mentions(entry.text)
             if entry.is_deleted:
@@ -694,13 +699,13 @@ class WaCLIApp(App):
         if entry.media_file:
             self.run_worker(self.open_media(entry.media_file))
 
-    async def open_media(self, media_file: str) -> None:
+    async def open_media(self, media_file: str, caption: str = "") -> None:
         local_path = RUNTIME_DIR / media_file
         ext = local_path.suffix.lower()
         if ext in IMAGE_EXTS:
-            viewer = "feh"
+            kind = "image"
         elif ext in VIDEO_EXTS:
-            viewer = "mpv"
+            kind = "video"
         else:
             self.notify(f"No viewer for {ext or 'unknown type'}", severity="error")
             return
@@ -721,9 +726,14 @@ class WaCLIApp(App):
             self.notify("Media could not be fetched", severity="error")
             return
 
-        subprocess.Popen(
-            [viewer, str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        if kind == "image":
+            self.open_image_viewer(local_path, caption=caption)
+        elif kind == "video":
+            subprocess.Popen(
+                ["mpv", str(local_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        else:
+            raise ValueError(f"Unexpected media kind: {kind}")
 
     def hide_message_modal(self) -> None:
         modal = self.query_one(MessageModal)

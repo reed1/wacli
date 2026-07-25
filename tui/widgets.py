@@ -1,10 +1,13 @@
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import ScrollableContainer
+from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Static, TextArea
 
+from tui.kitty_image import KittyImage
 from tui.models import Call, Entry, Message
 
 MENTION_RE = re.compile(r'<mention jid="[^"]*" name="([^"]*)"/>')
@@ -200,18 +203,29 @@ class MessageModal(Static):
         self.app.hide_message_modal()
 
 
-class ConfirmModal(Static):
+class ImageViewer(Vertical):
+    """Shows an image inline, optionally with a yes/no prompt below it.
+
+    The prompt shares the modal with the image so a send can be confirmed without
+    dismissing the preview first.
+    """
+
     DEFAULT_CSS = """
-    ConfirmModal {
-        display: none;
-        width: auto;
-        max-width: 60%;
-        padding: 1 2;
-        border: tall $warning;
+    ImageViewer {
+        layer: above;
+        width: 80%;
+        height: 80%;
+        padding: 0 1;
+        border: tall $primary;
         background: $surface;
     }
-    ConfirmModal.visible {
-        display: block;
+    ImageViewer.confirming {
+        border: tall $warning;
+    }
+    ImageViewer > #image-caption {
+        height: 1;
+        text-align: center;
+        color: $text;
     }
     """
 
@@ -225,14 +239,30 @@ class ConfirmModal(Static):
 
     app: "WaCLIApp"
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path, prompt: str | None = None, caption: str = "") -> None:
         super().__init__()
+        self.path = path
+        self.prompt = prompt
+        self.caption = caption
         self.can_focus = True
+        self.border_title = "Send image" if prompt else path.name
+        if prompt:
+            self.add_class("confirming")
+
+    def compose(self) -> ComposeResult:
+        yield KittyImage(self.path)
+        yield Static(self.prompt or self.caption or "[dim]esc to close[/]", id="image-caption")
 
     def action_confirm(self) -> None:
+        if self.prompt is None:
+            self.app.close_image_viewer()
+            return
         self.app.confirm_send_image()
 
     def action_cancel(self) -> None:
+        if self.prompt is None:
+            self.app.close_image_viewer()
+            return
         self.app.cancel_send_image()
 
 

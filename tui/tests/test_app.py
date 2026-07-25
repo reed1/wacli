@@ -1,8 +1,11 @@
+import base64
+import subprocess
+
 from tui.app import WaCLIApp
 from tui.models import Call, Message
-from tui.widgets import ComposeInput, EntryWidget, StatusBar
+from tui.widgets import ComposeInput, EntryWidget, ImageViewer, MessageModal, StatusBar
 
-from tui.tests.conftest import make_call, make_message, wait_until
+from tui.tests.conftest import make_call, make_message, png_bytes, wait_until
 
 
 def loaded_stub(stub_server, texts=("one", "two", "three")):
@@ -170,6 +173,69 @@ async def test_compose_escape_cancels(stub_server):
         assert not compose.has_class("visible")
         assert app.compose_mode is None
         assert not any(cmd["action"] != "get_entries" for cmd in stub_server.commands)
+
+
+def stub_clipboard(monkeypatch, image: bytes):
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=image, stderr=b"")
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: completed)
+
+
+async def test_send_image_confirms_without_dismissing_preview(stub_server, monkeypatch):
+    loaded_stub(stub_server)
+    image = png_bytes()
+    stub_clipboard(monkeypatch, image)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("I")
+        await wait_until(lambda: bool(app.query(ImageViewer)))
+        await pilot.pause()
+        viewer = app.query_one(ImageViewer)
+        assert "Send this image to Alice?" in viewer.prompt
+
+        await pilot.press("y")
+        cmd = await stub_server.wait_for_command("send_image")
+        assert base64.b64decode(cmd["image_data"]) == image
+        await wait_until(lambda: not app.query(ImageViewer))
+
+
+async def test_send_image_cancelled(stub_server, monkeypatch):
+    loaded_stub(stub_server)
+    stub_clipboard(monkeypatch, png_bytes())
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("I")
+        await wait_until(lambda: bool(app.query(ImageViewer)))
+        await pilot.pause()
+
+        await pilot.press("n")
+        await wait_until(lambda: not app.query(ImageViewer))
+        assert app.pending_image_chat is None
+        assert all(cmd["action"] != "send_image" for cmd in stub_server.commands)
+
+
+async def test_view_image_message_opens_inline_viewer(stub_server):
+    loaded_stub(stub_server)
+    stub_server.entries["messages"][2]["media_file"] = "pic.png"
+    stub_server.entries["messages"][2]["text"] = "a caption"
+    stub_server.media["pic.png"] = png_bytes()
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("H")
+        await wait_until(lambda: bool(app.query(ImageViewer)))
+        viewer = app.query_one(ImageViewer)
+        assert viewer.caption == "a caption"
+        assert viewer.prompt is None
+        assert not app.query_one(MessageModal).has_class("visible")
+
+        await pilot.pause()
+        await pilot.press("escape")
+        await wait_until(lambda: not app.query(ImageViewer))
 
 
 async def test_search(stub_server):
