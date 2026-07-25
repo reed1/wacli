@@ -3,7 +3,14 @@ import subprocess
 
 from tui.app import WaCLIApp
 from tui.models import Call, Message
-from tui.widgets import ComposeInput, EntryWidget, ImageViewer, MessageModal, StatusBar
+from tui.widgets import (
+    ComposeInput,
+    EntryWidget,
+    ImageViewer,
+    MessageList,
+    MessageModal,
+    StatusBar,
+)
 
 from tui.tests.conftest import make_call, make_message, png_bytes, wait_until
 
@@ -34,6 +41,24 @@ async def test_initial_entries_rendered(stub_server):
         assert [e.timestamp for e in app.entries] == [100, 200, 300]
         assert app.selected_index == 2
         assert app.query(EntryWidget)[2].has_class("selected")
+
+
+async def test_initial_render_lands_at_bottom(stub_server):
+    stub_server.entries = {
+        "messages": [
+            make_message(id=i, message_id=f"m{i}", timestamp=1700000000 + i, text=f"msg {i}")
+            for i in range(60)
+        ],
+        "calls": [],
+    }
+    app = WaCLIApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_until(lambda: len(app.entries) == 60)
+        await pilot.pause()
+        message_list = app.query_one(MessageList)
+        assert message_list.visible
+        assert message_list.scroll_y == message_list.max_scroll_y
+        assert app.selected_index == 59
 
 
 async def test_live_message_appends_and_follows(stub_server):

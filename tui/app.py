@@ -243,19 +243,30 @@ class WaCLIApp(App):
         log("on_mount: starting worker")
         self.run_worker(self.listen_socket(), exclusive=True)
 
-    def render_entries(self) -> None:
+    async def render_entries(self) -> None:
         message_list = self.query_one(MessageList)
-        message_list.remove_children()
+        await message_list.remove_children()
         if self.entries:
             self.selected_index = len(self.entries) - 1
-        for i, entry in enumerate(self.entries):
-            message_list.mount(EntryWidget(entry, selected=(i == self.selected_index)))
-        self.call_after_refresh(self.scroll_to_selected)
+        # Keep the list hidden until it is scrolled into place so the initial
+        # top-anchored layout and the jump to the bottom never get painted.
+        message_list.visible = False
+        # Anchoring pins the scroll to the bottom while the rows are still being
+        # laid out; a one-shot scroll_end would fire before the heights are known.
+        message_list.anchor()
+        await message_list.mount_all(
+            [
+                EntryWidget(entry, selected=(i == self.selected_index))
+                for i, entry in enumerate(self.entries)
+            ]
+        )
+        self.call_after_refresh(self.reveal_entries)
 
-    def scroll_to_selected(self) -> None:
-        widgets = self.query(EntryWidget)
-        if widgets and 0 <= self.selected_index < len(widgets):
-            widgets[self.selected_index].scroll_visible()
+    def reveal_entries(self) -> None:
+        message_list = self.query_one(MessageList)
+        message_list.scroll_end(animate=False, immediate=True)
+        message_list.anchor(False)
+        message_list.visible = True
 
     def update_selection(self, new_index: int) -> None:
         if not self.entries:
@@ -325,7 +336,7 @@ class WaCLIApp(App):
             data = event["data"]
             if entry_type == "entries":
                 self.load_entries_from_data(data)
-                self.render_entries()
+                await self.render_entries()
                 continue
 
             if entry_type == "message_updated":
