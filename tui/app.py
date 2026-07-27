@@ -13,8 +13,9 @@ import pyperclip
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Provider
+from textual.containers import Vertical
 from textual.notifications import Notification, Notify
-from textual.widgets import Header
+from textual.widgets import Footer, Header
 
 from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
@@ -24,6 +25,7 @@ from tui.widgets import (
     ComposeInput,
     ComposeQuote,
     EntryWidget,
+    HelpScreen,
     ImageViewer,
     MessageList,
     MessageModal,
@@ -160,6 +162,13 @@ class WaCLIApp(App):
     MessageModal {
         layer: above;
     }
+    #bottom-bars {
+        dock: bottom;
+        height: auto;
+    }
+    #bottom-bars Footer {
+        dock: none;
+    }
     """
 
     COMMANDS = {WaCLICommands}
@@ -197,6 +206,7 @@ class WaCLIApp(App):
         Binding("n", "search_next", "Next match", show=False),
         Binding("N", "search_prev", "Prev match", show=False),
         Binding("escape", "clear_search", "Clear search", show=False),
+        Binding("question_mark", "show_help", "Keys"),
     ]
 
     HALF_PAGE = 15
@@ -223,6 +233,7 @@ class WaCLIApp(App):
         self.search_query: str = ""
         self.search_matches: list[int] = []
         self.search_index: int = -1
+        self.status_text: str = ""
         for cb in self.CHORD_BINDINGS:
             self._chord_map[cb.keys] = cb.action
             for i in range(1, len(cb.keys)):
@@ -234,12 +245,14 @@ class WaCLIApp(App):
         yield ComposeQuote()
         yield ComposeInput()
         yield MessageModal()
-        yield SearchInput()
-        yield StatusBar("")
+        # Docking each bar separately would stack them on the same row, so the
+        # footer would paint over the status/search line.
+        yield Vertical(SearchInput(), StatusBar(""), Footer(), id="bottom-bars")
 
     async def on_mount(self) -> None:
         log("on_mount: start")
         self.title = "WhatsApp Messages"
+        self.set_status("")
         log("on_mount: starting worker")
         self.run_worker(self.listen_socket(), exclusive=True)
 
@@ -751,7 +764,10 @@ class WaCLIApp(App):
         modal.remove_class("visible")
 
     def set_status(self, text: str) -> None:
-        self.query_one(StatusBar).update(text)
+        self.status_text = text
+        status = self.query_one(StatusBar)
+        status.update(text)
+        status.set_class(not text, "hidden")
 
     def action_open_search(self) -> None:
         if not self.entries:
@@ -765,7 +781,7 @@ class WaCLIApp(App):
     def hide_search(self) -> None:
         search = self.query_one(SearchInput)
         search.remove_class("visible")
-        self.query_one(StatusBar).remove_class("hidden")
+        self.query_one(StatusBar).set_class(not self.status_text, "hidden")
         self.set_focus(None)
 
     def run_search(self, query: str) -> None:
@@ -812,6 +828,15 @@ class WaCLIApp(App):
         self.search_index = (self.search_index + delta) % n
         self.update_selection(self.search_matches[self.search_index])
         self.set_status(f"{self.search_index + 1}/{n} for '{self.search_query}'")
+
+    def action_show_help(self) -> None:
+        if isinstance(self.screen, HelpScreen):
+            return
+        shortcuts = [
+            (self.get_key_display(binding), binding.description) for binding in self.BINDINGS
+        ]
+        shortcuts += [(cb.keys, cb.description) for cb in self.CHORD_BINDINGS]
+        self.push_screen(HelpScreen(shortcuts))
 
     def action_clear_search(self) -> None:
         self.clear_search()
