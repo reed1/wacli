@@ -1,7 +1,7 @@
 import base64
 import subprocess
 
-from tui.app import WaCLIApp
+from tui.app import VIM_VIEW_PATH, WaCLIApp
 from tui.models import Call, Message
 from tui.widgets import (
     ComposeInput,
@@ -198,6 +198,54 @@ async def test_compose_escape_cancels(stub_server):
         assert not compose.has_class("visible")
         assert app.compose_mode is None
         assert not any(cmd["action"] != "get_entries" for cmd in stub_server.commands)
+
+
+async def test_open_in_vim_launches_kitty_overlay(stub_server, monkeypatch):
+    loaded_stub(stub_server, texts=("one", "two", 'say <mention jid="9@s" name="Bob"/> hi'))
+    monkeypatch.setenv("KITTY_WINDOW_ID", "7")
+    launched: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        launched.append(command)
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("v")
+
+        assert launched == [
+            [
+                "kitty",
+                "@",
+                "launch",
+                "--type=overlay",
+                "--next-to",
+                "id:7",
+                "--title",
+                "wacli: Alice",
+                "vim",
+                "-M",
+                "-n",
+                str(VIM_VIEW_PATH),
+            ]
+        ]
+        assert VIM_VIEW_PATH.read_text() == "say @Bob hi\n"
+
+
+async def test_open_in_vim_ignores_calls(stub_server, monkeypatch):
+    stub_server.entries = {"messages": [], "calls": [make_call(timestamp=300)]}
+    monkeypatch.setenv("KITTY_WINDOW_ID", "7")
+    launched = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: launched.append(command))
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 1)
+
+        await pilot.press("v")
+        assert launched == []
 
 
 def stub_clipboard(monkeypatch, image: bytes):

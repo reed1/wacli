@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import re
 import subprocess
 import uuid
@@ -21,6 +22,7 @@ from tui.models import Call, Entry, Message
 from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
 
 CLIPBOARD_IMAGE_PATH = RUNTIME_DIR / "clipboard_send.png"
+VIM_VIEW_PATH = RUNTIME_DIR / "message.txt"
 from tui.widgets import (
     ComposeInput,
     ComposeQuote,
@@ -178,6 +180,7 @@ class WaCLIApp(App):
         PaletteCommand("React", "react", "Send an emoji reaction to the selected message"),
         PaletteCommand("Send image", "send_image", "Send the clipboard image to the selected chat"),
         PaletteCommand("Copy", "copy_message", "Copy the selected message to the clipboard"),
+        PaletteCommand("Open in Vim", "open_in_vim", "View the selected message text in Vim"),
         PaletteCommand("View", "show_message", "Open the selected message or its media"),
         PaletteCommand("Open URL", "open_url", "Open links found in the selected message"),
         PaletteCommand("Search", "open_search", "Search messages"),
@@ -201,6 +204,7 @@ class WaCLIApp(App):
         Binding("m", "react", "React"),
         Binding("I", "send_image", "Send image"),
         Binding("y", "copy_message", "Copy"),
+        Binding("v", "open_in_vim", "Vim"),
         Binding("H", "show_message", "View"),
         Binding("slash", "open_search", "Search"),
         Binding("n", "search_next", "Next match", show=False),
@@ -472,6 +476,50 @@ class WaCLIApp(App):
             return
         pyperclip.copy(strip_mentions(entry.text))
         self.notify("Copied to clipboard")
+
+    def action_open_in_vim(self) -> None:
+        entry = self.get_selected_entry()
+        if not entry or isinstance(entry, Call):
+            return
+        text = strip_mentions(entry.text)
+        if not text.strip():
+            self.notify("No text to open")
+            return
+
+        window_id = os.environ.get("KITTY_WINDOW_ID")
+        if not window_id:
+            self.notify("Not running inside kitty", severity="error")
+            return
+
+        VIM_VIEW_PATH.write_text(text.rstrip("\n") + "\n")
+        # -M leaves the buffer unmodifiable and unwritable so the view stays read-only;
+        # -n skips the swap file, which would otherwise prompt for recovery whenever this
+        # reused path is opened twice.
+        command = [
+            "kitty",
+            "@",
+            "launch",
+            "--type=overlay",
+            "--next-to",
+            f"id:{window_id}",
+            "--title",
+            f"wacli: {entry.title}",
+            "vim",
+            "-M",
+            "-n",
+            str(VIM_VIEW_PATH),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=5)
+        except FileNotFoundError:
+            self.notify("kitty not found", severity="error")
+            return
+        except subprocess.TimeoutExpired:
+            self.notify("kitty overlay timed out", severity="error")
+            return
+
+        if result.returncode != 0:
+            self.notify(f"Vim overlay failed: {result.stderr.decode().strip()}", severity="error")
 
     def action_open_url(self) -> None:
         entry = self.get_selected_entry()
