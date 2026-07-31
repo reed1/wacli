@@ -295,6 +295,12 @@ class WaCLIApp(App):
         message_list = self.query_one(MessageList)
         message_list.scroll_end(animate=False, immediate=True)
         message_list.anchor(False)
+        # Anchoring writes the scroll offset without clamping it, so entries that don't
+        # fill the viewport leave it negative. That offset pushes every later row below
+        # the fold, behind the docked footer, and nothing takes it back: without a
+        # scrollbar Textual refuses to scroll, so force the offset back to the top.
+        if message_list.scroll_y < 0:
+            message_list.scroll_to(0, 0, animate=False, immediate=True, force=True)
         message_list.visible = True
 
     def update_selection(self, new_index: int) -> None:

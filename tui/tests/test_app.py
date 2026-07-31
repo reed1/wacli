@@ -57,6 +57,31 @@ async def test_initial_render_lands_at_bottom(stub_server):
         assert app.selected_index == 59
 
 
+async def test_short_list_keeps_appended_entry_on_screen(stub_server):
+    stub_server.entries = make_entries(
+        *[
+            make_message(id=i, message_id=f"m{i}", timestamp=1700000000 + i, text=f"msg {i}")
+            for i in range(5)
+        ]
+    )
+    app = WaCLIApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_until(lambda: len(app.entries) == 5)
+        await pilot.pause()
+        message_list = app.query_one(MessageList)
+        assert message_list.scroll_y == 0
+
+        stub_server.send_event(
+            "message",
+            make_message(
+                id=6, message_id="m6", timestamp=1700000100, text="mine", is_from_me=True
+            ),
+        )
+        await wait_until(lambda: len(app.entries) == 6)
+        await pilot.pause()
+        assert message_list.region.contains_region(app.query(EntryWidget)[-1].region)
+
+
 async def test_live_message_appends_and_follows(stub_server):
     loaded_stub(stub_server)
     app = WaCLIApp()
