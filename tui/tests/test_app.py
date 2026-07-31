@@ -12,28 +12,25 @@ from tui.widgets import (
     StatusBar,
 )
 
-from tui.tests.conftest import make_call, make_message, png_bytes, wait_until
+from tui.tests.conftest import make_call, make_entries, make_message, png_bytes, wait_until
 
 
 def loaded_stub(stub_server, texts=("one", "two", "three")):
-    stub_server.entries = {
-        "messages": [
+    stub_server.entries = make_entries(
+        *[
             make_message(id=i + 1, message_id=f"m{i + 1}", timestamp=1700000000 + i, text=text)
             for i, text in enumerate(texts)
-        ],
-        "calls": [],
-    }
+        ]
+    )
     return stub_server
 
 
 async def test_initial_entries_rendered(stub_server):
-    stub_server.entries = {
-        "messages": [
-            make_message(id=1, message_id="m1", timestamp=200, text="second"),
-            make_message(id=2, message_id="m2", timestamp=100, text="first"),
-        ],
-        "calls": [make_call(timestamp=300)],
-    }
+    stub_server.entries = make_entries(
+        make_message(id=1, message_id="m1", timestamp=100, text="first"),
+        make_message(id=2, message_id="m2", timestamp=200, text="second"),
+        make_call(timestamp=300),
+    )
     app = WaCLIApp()
     async with app.run_test() as pilot:
         await wait_until(lambda: len(app.query(EntryWidget)) == 3)
@@ -44,13 +41,12 @@ async def test_initial_entries_rendered(stub_server):
 
 
 async def test_initial_render_lands_at_bottom(stub_server):
-    stub_server.entries = {
-        "messages": [
+    stub_server.entries = make_entries(
+        *[
             make_message(id=i, message_id=f"m{i}", timestamp=1700000000 + i, text=f"msg {i}")
             for i in range(60)
-        ],
-        "calls": [],
-    }
+        ]
+    )
     app = WaCLIApp()
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_until(lambda: len(app.entries) == 60)
@@ -236,7 +232,7 @@ async def test_open_in_vim_launches_kitty_overlay(stub_server, monkeypatch):
 
 
 async def test_open_in_vim_ignores_calls(stub_server, monkeypatch):
-    stub_server.entries = {"messages": [], "calls": [make_call(timestamp=300)]}
+    stub_server.entries = make_entries(make_call(timestamp=300))
     monkeypatch.setenv("KITTY_WINDOW_ID", "7")
     launched = []
     monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: launched.append(command))
@@ -292,8 +288,8 @@ async def test_send_image_cancelled(stub_server, monkeypatch):
 
 async def test_view_image_message_opens_inline_viewer(stub_server):
     loaded_stub(stub_server)
-    stub_server.entries["messages"][2]["media_file"] = "pic.png"
-    stub_server.entries["messages"][2]["text"] = "a caption"
+    stub_server.entries["entries"][2]["message"]["media_file"] = "pic.png"
+    stub_server.entries["entries"][2]["message"]["text"] = "a caption"
     stub_server.media["pic.png"] = png_bytes()
     app = WaCLIApp()
     async with app.run_test() as pilot:

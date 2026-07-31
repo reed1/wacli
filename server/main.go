@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -49,6 +50,7 @@ func protoDump(m proto.Message) string {
 const (
 	maxEntries               = 200
 	trimToCount              = 150
+	entriesLimit             = 50
 	permanentFailureExitCode = 2
 	// Upper bound for a single newline-delimited socket command. Large enough
 	// to carry a base64-encoded image sent from the TUI.
@@ -521,15 +523,25 @@ func (a *App) broadcastCall(call *Call) {
 	}
 }
 
-type EntriesData struct {
-	Messages []Message `json:"messages"`
-	Calls    []Call    `json:"calls"`
+type Entry struct {
+	Kind      string   `json:"kind"`
+	Timestamp int64    `json:"-"`
+	Message   *Message `json:"message,omitempty"`
+	Call      *Call    `json:"call,omitempty"`
 }
 
-func (a *App) sendEntries(state *connState) error {
-	rows, err := a.msgDB.Query("SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, original_text, is_deleted FROM messages ORDER BY timestamp")
+type EntriesData struct {
+	Entries []Entry `json:"entries"`
+}
+
+func (a *App) recentMessages(limit int) ([]Message, error) {
+	rows, err := a.msgDB.Query(
+		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, original_text, is_deleted
+		 FROM (SELECT * FROM messages ORDER BY timestamp DESC, id DESC LIMIT ?) ORDER BY timestamp, id`,
+		limit,
+	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -538,7 +550,7 @@ func (a *App) sendEntries(state *connState) error {
 		var msg Message
 		var isGroup, isMuted, isReplyToMe, isFromMe, isDeleted int
 		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.OriginalText, &isDeleted); err != nil {
-			return err
+			return nil, err
 		}
 		msg.IsGroup = isGroup != 0
 		msg.IsMuted = isMuted != 0
@@ -547,25 +559,59 @@ func (a *App) sendEntries(state *connState) error {
 		msg.IsDeleted = isDeleted != 0
 		messages = append(messages, msg)
 	}
+	return messages, rows.Err()
+}
 
-	callRows, err := a.msgDB.Query("SELECT id, timestamp, call_id, caller_jid, caller_name, is_group, group_jid, group_name FROM calls ORDER BY timestamp")
+func (a *App) recentCalls(limit int) ([]Call, error) {
+	rows, err := a.msgDB.Query(
+		`SELECT id, timestamp, call_id, caller_jid, caller_name, is_group, group_jid, group_name
+		 FROM (SELECT * FROM calls ORDER BY timestamp DESC, id DESC LIMIT ?) ORDER BY timestamp, id`,
+		limit,
+	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer callRows.Close()
+	defer rows.Close()
 
 	var calls []Call
-	for callRows.Next() {
+	for rows.Next() {
 		var call Call
 		var isGroup int
-		if err := callRows.Scan(&call.ID, &call.Timestamp, &call.CallID, &call.CallerJID, &call.CallerName, &isGroup, &call.GroupJID, &call.GroupName); err != nil {
-			return err
+		if err := rows.Scan(&call.ID, &call.Timestamp, &call.CallID, &call.CallerJID, &call.CallerName, &isGroup, &call.GroupJID, &call.GroupName); err != nil {
+			return nil, err
 		}
 		call.IsGroup = isGroup != 0
 		calls = append(calls, call)
 	}
+	return calls, rows.Err()
+}
 
-	event := SocketEvent{Type: "entries", Data: EntriesData{Messages: messages, Calls: calls}}
+func mergeEntries(messages []Message, calls []Call, limit int) []Entry {
+	entries := make([]Entry, 0, len(messages)+len(calls))
+	for i := range messages {
+		entries = append(entries, Entry{Kind: "message", Timestamp: messages[i].Timestamp, Message: &messages[i]})
+	}
+	for i := range calls {
+		entries = append(entries, Entry{Kind: "call", Timestamp: calls[i].Timestamp, Call: &calls[i]})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Timestamp < entries[j].Timestamp })
+	if len(entries) > limit {
+		entries = entries[len(entries)-limit:]
+	}
+	return entries
+}
+
+func (a *App) sendEntries(state *connState) error {
+	messages, err := a.recentMessages(entriesLimit)
+	if err != nil {
+		return err
+	}
+	calls, err := a.recentCalls(entriesLimit)
+	if err != nil {
+		return err
+	}
+
+	event := SocketEvent{Type: "entries", Data: EntriesData{Entries: mergeEntries(messages, calls, entriesLimit)}}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err

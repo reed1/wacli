@@ -40,7 +40,6 @@ from tui.widgets import (
 
 ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 
-MAX_ENTRIES = 200
 SOCKET_READ_LIMIT = 1024 * 1024
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
@@ -113,6 +112,19 @@ def message_from_data(data: dict) -> Message:
         is_from_me=data.get("is_from_me", False),
         original_text=data.get("original_text"),
         is_deleted=data.get("is_deleted", False),
+    )
+
+
+def call_from_data(data: dict) -> Call:
+    return Call(
+        id=data.get("id", 0),
+        timestamp=data["timestamp"],
+        call_id=data["call_id"],
+        caller_jid=data["caller_jid"],
+        caller_name=data["caller_name"],
+        is_group=data["is_group"],
+        group_jid=data["group_jid"],
+        group_name=data["group_name"],
     )
 
 
@@ -362,16 +374,7 @@ class WaCLIApp(App):
 
             entry: Entry
             if entry_type == "call":
-                entry = Call(
-                    id=data.get("id", 0),
-                    timestamp=data["timestamp"],
-                    call_id=data["call_id"],
-                    caller_jid=data["caller_jid"],
-                    caller_name=data["caller_name"],
-                    is_group=data["is_group"],
-                    group_jid=data["group_jid"],
-                    group_name=data["group_name"],
-                )
+                entry = call_from_data(data)
                 log(f"listen_socket: parsed call from {entry.caller_name}")
             elif entry_type == "message":
                 entry = message_from_data(data)
@@ -407,23 +410,16 @@ class WaCLIApp(App):
         log(f"apply_message_update: updated {message.message_id} deleted={message.is_deleted}")
 
     def load_entries_from_data(self, data: dict) -> None:
-        messages: list[Entry] = [message_from_data(msg) for msg in data.get("messages") or []]
-        calls: list[Entry] = []
-        for call in data.get("calls") or []:
-            calls.append(
-                Call(
-                    id=call.get("id", 0),
-                    timestamp=call["timestamp"],
-                    call_id=call["call_id"],
-                    caller_jid=call["caller_jid"],
-                    caller_name=call["caller_name"],
-                    is_group=call["is_group"],
-                    group_jid=call["group_jid"],
-                    group_name=call["group_name"],
-                )
-            )
-        merged = sorted(messages + calls, key=lambda e: e.timestamp)
-        self.entries = merged[-MAX_ENTRIES:]
+        entries: list[Entry] = []
+        for item in data.get("entries") or []:
+            kind = item["kind"]
+            if kind == "message":
+                entries.append(message_from_data(item["message"]))
+            elif kind == "call":
+                entries.append(call_from_data(item["call"]))
+            else:
+                raise ValueError(f"Unexpected entry kind: {kind}")
+        self.entries = entries
         log(f"load_entries_from_data: loaded {len(self.entries)} entries")
 
     def action_select_next(self) -> None:

@@ -43,6 +43,17 @@ def make_message(**overrides) -> dict:
     return data
 
 
+def make_entries(*items: dict) -> dict:
+    """Wraps message/call dicts in the server's ordered entries payload."""
+    entries = []
+    for item in items:
+        if "message_id" in item:
+            entries.append({"kind": "message", "message": item})
+        else:
+            entries.append({"kind": "call", "call": item})
+    return {"entries": entries}
+
+
 def make_call(**overrides) -> dict:
     data = {
         "id": 1,
@@ -62,7 +73,7 @@ class StubServer:
     """Speaks the wacli server's newline-delimited JSON socket protocol."""
 
     def __init__(self) -> None:
-        self.entries: dict = {"messages": [], "calls": []}
+        self.entries: dict = {"entries": []}
         self.media: dict[str, bytes] = {}
         self.commands: list[dict] = []
         self.writers: list[asyncio.StreamWriter] = []

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -227,10 +228,71 @@ func TestSendEntries(t *testing.T) {
 	if event.Type != "entries" {
 		t.Errorf("event type = %q, want entries", event.Type)
 	}
-	if len(event.Data.Messages) != 2 {
-		t.Fatalf("got %d messages, want 2", len(event.Data.Messages))
+	if len(event.Data.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(event.Data.Entries))
 	}
-	if event.Data.Messages[0].Text != "first" || event.Data.Messages[1].Text != "second" {
-		t.Errorf("messages out of order: %+v", event.Data.Messages)
+	if event.Data.Entries[0].Message.Text != "first" || event.Data.Entries[1].Message.Text != "second" {
+		t.Errorf("entries out of order: %+v", event.Data.Entries)
+	}
+	if event.Data.Entries[0].Kind != "message" {
+		t.Errorf("kind = %q, want message", event.Data.Entries[0].Kind)
+	}
+}
+
+func TestMergeEntriesKeepsNewestAcrossSources(t *testing.T) {
+	var messages []Message
+	for i := range entriesLimit {
+		messages = append(messages, Message{ID: int64(i), Timestamp: int64(1000 + i)})
+	}
+	calls := []Call{{ID: 1, Timestamp: 10}, {ID: 2, Timestamp: 1000 + entriesLimit}}
+
+	entries := mergeEntries(messages, calls, entriesLimit)
+
+	if len(entries) != entriesLimit {
+		t.Fatalf("got %d entries, want %d", len(entries), entriesLimit)
+	}
+	if entries[len(entries)-1].Kind != "call" || entries[len(entries)-1].Call.ID != 2 {
+		t.Errorf("newest entry = %+v, want the recent call", entries[len(entries)-1])
+	}
+	for _, entry := range entries {
+		if entry.Kind == "call" && entry.Call.ID == 1 {
+			t.Error("stale call survived the trim")
+		}
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].Timestamp > entries[i].Timestamp {
+			t.Fatalf("entries not sorted ascending at %d", i)
+		}
+	}
+}
+
+func TestSendEntriesTrimsStaleCalls(t *testing.T) {
+	a := newTestApp(t)
+
+	for i := range entriesLimit {
+		a.handleMessage(incomingText(fmt.Sprintf("m%d", i), "111", "recent"))
+	}
+	if err := a.saveCall(&Call{Timestamp: 1, CallID: "old", CallerJID: "222@s.whatsapp.net", CallerName: "Bob"}); err != nil {
+		t.Fatal(err)
+	}
+
+	state, lines := a.attachConn(t)
+	if err := a.sendEntries(state); err != nil {
+		t.Fatalf("sendEntries: %v", err)
+	}
+
+	var event struct {
+		Data EntriesData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(recvLine(t, lines)), &event); err != nil {
+		t.Fatal(err)
+	}
+	if len(event.Data.Entries) != entriesLimit {
+		t.Fatalf("got %d entries, want %d", len(event.Data.Entries), entriesLimit)
+	}
+	for _, entry := range event.Data.Entries {
+		if entry.Kind != "message" {
+			t.Fatalf("stale call included in entries: %+v", entry)
+		}
 	}
 }

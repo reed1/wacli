@@ -6,7 +6,7 @@ from tui.app import MediaAssembler, WaCLIApp, message_from_data
 from tui.models import Call, Message
 from tui.widgets import format_entry_plain, render_mentions, strip_mentions
 
-from tui.tests.conftest import make_call, make_message
+from tui.tests.conftest import make_call, make_entries, make_message
 
 import base64
 
@@ -83,24 +83,28 @@ def test_format_entry_plain():
     assert format_entry_plain(call).endswith("Bob: Incoming call")
 
 
-def test_load_entries_from_data_merges_and_sorts():
+def test_load_entries_from_data_preserves_server_order():
     app = WaCLIApp()
     app.load_entries_from_data(
-        {
-            "messages": [
-                make_message(id=1, timestamp=300, text="late"),
-                make_message(id=2, timestamp=100, text="early"),
-            ],
-            "calls": [make_call(timestamp=200)],
-        }
+        make_entries(
+            make_message(id=1, timestamp=100, text="early"),
+            make_call(timestamp=200),
+            make_message(id=2, timestamp=300, text="late"),
+        )
     )
     assert [type(e) for e in app.entries] == [Message, Call, Message]
     assert [e.timestamp for e in app.entries] == [100, 200, 300]
 
 
-def test_load_entries_from_data_handles_null_lists():
+def test_load_entries_from_data_rejects_unknown_kind():
     app = WaCLIApp()
-    app.load_entries_from_data({"messages": None, "calls": None})
+    with pytest.raises(ValueError):
+        app.load_entries_from_data({"entries": [{"kind": "sticker"}]})
+
+
+def test_load_entries_from_data_handles_null_list():
+    app = WaCLIApp()
+    app.load_entries_from_data({"entries": None})
     assert app.entries == []
 
 
