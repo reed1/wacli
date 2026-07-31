@@ -164,6 +164,11 @@ class WaCLIApp(App):
         width: 100%;
         scrollbar-gutter: stable;
         scrollbar-size-vertical: 1;
+        /* Rest the rows on the bottom edge while they are too few to fill the pane.
+           Textual writes an anchored container's scroll offset unclamped, so a
+           top-aligned short list is left at a negative offset that pushes later rows
+           below the fold, behind the footer. Bottom alignment keeps the offset at 0. */
+        align-vertical: bottom;
     }
     ComposeQuote {
         layer: above;
@@ -280,8 +285,9 @@ class WaCLIApp(App):
         # Keep the list hidden until it is scrolled into place so the initial
         # top-anchored layout and the jump to the bottom never get painted.
         message_list.visible = False
-        # Anchoring pins the scroll to the bottom while the rows are still being
-        # laid out; a one-shot scroll_end would fire before the heights are known.
+        # Anchoring pins the scroll to the bottom on every layout pass, including the
+        # last one. A scroll_end here instead would read max_scroll_y before the rows
+        # have been arranged and strand the list at the top.
         message_list.anchor()
         await message_list.mount_all(
             [
@@ -292,16 +298,9 @@ class WaCLIApp(App):
         self.call_after_refresh(self.reveal_entries)
 
     def reveal_entries(self) -> None:
-        message_list = self.query_one(MessageList)
-        message_list.scroll_end(animate=False, immediate=True)
-        message_list.anchor(False)
-        # Anchoring writes the scroll offset without clamping it, so entries that don't
-        # fill the viewport leave it negative. That offset pushes every later row below
-        # the fold, behind the docked footer, and nothing takes it back: without a
-        # scrollbar Textual refuses to scroll, so force the offset back to the top.
-        if message_list.scroll_y < 0:
-            message_list.scroll_to(0, 0, animate=False, immediate=True, force=True)
-        message_list.visible = True
+        # The anchor is left in place; Textual releases it as soon as the selection
+        # scrolls the list, so it only ever governs the untouched startup view.
+        self.query_one(MessageList).visible = True
 
     def update_selection(self, new_index: int) -> None:
         if not self.entries:

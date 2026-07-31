@@ -1,6 +1,8 @@
 import base64
 import subprocess
 
+import pytest
+
 from tui.app import VIM_VIEW_PATH, WaCLIApp
 from tui.models import Call, Message
 from tui.widgets import (
@@ -40,21 +42,31 @@ async def test_initial_entries_rendered(stub_server):
         assert app.query(EntryWidget)[2].has_class("selected")
 
 
-async def test_initial_render_lands_at_bottom(stub_server):
+def painted_entries(app):
+    compositor = app.screen._compositor
+    rows = (compositor.get_widget_at(2, y) for y in range(app.screen.size.height))
+    return [hit[0] for hit in rows if hit and isinstance(hit[0], EntryWidget)]
+
+
+# Heights either side of the 50 entries, so both the scrolling and the fits-on-screen
+# layouts are covered.
+@pytest.mark.parametrize("height", [24, 40, 60])
+async def test_initial_render_lands_at_bottom(stub_server, height):
     stub_server.entries = make_entries(
         *[
             make_message(id=i, message_id=f"m{i}", timestamp=1700000000 + i, text=f"msg {i}")
-            for i in range(60)
+            for i in range(50)
         ]
     )
     app = WaCLIApp()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await wait_until(lambda: len(app.entries) == 60)
+    async with app.run_test(size=(80, height)) as pilot:
+        await wait_until(lambda: len(app.entries) == 50)
         await pilot.pause()
         message_list = app.query_one(MessageList)
         assert message_list.visible
         assert message_list.scroll_y == message_list.max_scroll_y
-        assert app.selected_index == 59
+        assert app.selected_index == 49
+        assert painted_entries(app)[-1].entry.text == "msg 49"
 
 
 async def test_short_list_keeps_appended_entry_on_screen(stub_server):
