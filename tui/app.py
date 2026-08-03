@@ -34,6 +34,7 @@ from tui.widgets import (
     SearchInput,
     StatusBar,
     format_entry_plain,
+    format_entry_title,
     render_mentions,
     strip_mentions,
 )
@@ -766,6 +767,8 @@ class WaCLIApp(App):
                     f"{body}\n\n[dim italic]✎ original:[/]\n{render_mentions(entry.original_text)}"
                 )
             modal = self.query_one(MessageModal)
+            modal.border_title = f"[bold cyan]{format_entry_title(entry)}[/]"
+            modal.border_subtitle = f"[dim]{entry.formatted_time}[/]"
             modal.update(body)
             modal.add_class("visible")
             modal.focus()

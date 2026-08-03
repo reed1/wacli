@@ -42,6 +42,14 @@ def strip_mentions(text: str) -> str:
     return MENTION_RE.sub(r"@\1", text)
 
 
+def format_entry_title(entry: "Entry", search_query: str = "") -> str:
+    sender = highlight_plain(entry.title, search_query)
+    if isinstance(entry, Message) and entry.is_group and not entry.is_from_me:
+        chat = highlight_plain(entry.chat_name, search_query)
+        return f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
+    return sender
+
+
 def format_entry_plain(entry: "Entry") -> str:
     if isinstance(entry, Message):
         text = strip_mentions(entry.text).replace("\n", " ")
@@ -91,12 +99,7 @@ class EntryWidget(Static):
             else:
                 content = f"{type_prefix}{text_oneline}"
             # Don't use rich.markup.escape() — it skips uppercase tags like [RUN]
-            sender = highlight_plain(msg.title, query)
-            if msg.is_group and not msg.is_from_me:
-                chat = highlight_plain(msg.chat_name, query)
-                title = f"{sender} [bold magenta]👥[/] [magenta]{chat}[/]"
-            else:
-                title = sender
+            title = format_entry_title(msg, query)
             return f"{indicator} [dim]{msg.formatted_time}[/][bold cyan] {title}[/]: {content}"
         call = self.entry
         title = highlight_plain(call.title, query)
@@ -181,6 +184,7 @@ class MessageModal(Static):
         max-height: 80%;
         padding: 1 2;
         border: tall $primary;
+        border-title-align: left;
         background: $surface;
         overflow-y: auto;
     }

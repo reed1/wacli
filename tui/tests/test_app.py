@@ -344,6 +344,35 @@ async def test_view_image_message_opens_inline_viewer(stub_server):
         await wait_until(lambda: not app.query(ImageViewer))
 
 
+async def test_view_message_modal_titles_the_border_with_sender_and_group(stub_server):
+    stub_server.entries = make_entries(
+        make_message(id=1, message_id="m1", timestamp=100, text="direct"),
+        make_message(
+            id=2,
+            message_id="m2",
+            timestamp=200,
+            text="in a group",
+            chat_name="Family",
+            sender_name="Bob",
+            is_group=True,
+        ),
+    )
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 2)
+
+        await pilot.press("H")
+        modal = app.query_one(MessageModal)
+        assert modal.has_class("visible")
+        assert "Bob" in modal.border_title
+        assert "Family" in modal.border_title
+
+        await pilot.press("escape")
+        await pilot.press("k", "H")
+        assert "Alice" in modal.border_title
+        assert "Family" not in modal.border_title
+
+
 async def test_search(stub_server):
     loaded_stub(stub_server, texts=("apple pie", "banana", "apple juice"))
     app = WaCLIApp()
