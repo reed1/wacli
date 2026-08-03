@@ -80,22 +80,23 @@ func (a *App) resolveMentions(text string, msg *waE2E.Message) (result string) {
 }
 
 type Message struct {
-	ID           int64   `json:"id"`
-	MessageID    string  `json:"message_id"`
-	Timestamp    int64   `json:"timestamp"`
-	ChatJID      string  `json:"chat_jid"`
-	ChatName     string  `json:"chat_name"`
-	SenderJID    string  `json:"sender_jid"`
-	SenderName   string  `json:"sender_name"`
-	IsGroup      bool    `json:"is_group"`
-	IsMuted      bool    `json:"is_muted"`
-	IsReplyToMe  bool    `json:"is_reply_to_me"`
-	IsFromMe     bool    `json:"is_from_me"`
-	MessageType  string  `json:"message_type"`
-	Text         string  `json:"text"`
-	MediaFile    *string `json:"media_file"`
-	OriginalText *string `json:"original_text"`
-	IsDeleted    bool    `json:"is_deleted"`
+	ID            int64   `json:"id"`
+	MessageID     string  `json:"message_id"`
+	Timestamp     int64   `json:"timestamp"`
+	ChatJID       string  `json:"chat_jid"`
+	ChatName      string  `json:"chat_name"`
+	SenderJID     string  `json:"sender_jid"`
+	SenderName    string  `json:"sender_name"`
+	IsGroup       bool    `json:"is_group"`
+	IsMuted       bool    `json:"is_muted"`
+	IsReplyToMe   bool    `json:"is_reply_to_me"`
+	IsFromMe      bool    `json:"is_from_me"`
+	MessageType   string  `json:"message_type"`
+	Text          string  `json:"text"`
+	MediaFile     *string `json:"media_file"`
+	Transcription *string `json:"transcription"`
+	OriginalText  *string `json:"original_text"`
+	IsDeleted     bool    `json:"is_deleted"`
 }
 
 func (a *App) handleMessage(msg *events.Message) {
@@ -146,10 +147,6 @@ func (a *App) handleMessage(msg *events.Message) {
 	msgType, text := extractMessage(msg.Message)
 	text = a.resolveMentions(text, msg.Message)
 
-	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() {
-		go a.handleVoiceMessage(msg, audio)
-	}
-
 	var mediaFile *string
 	if img := msg.Message.GetImageMessage(); img != nil {
 		filename, err := a.downloadMedia(img, img.GetMimetype())
@@ -192,6 +189,12 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	a.broadcastMessage(message)
+
+	// Started after the insert: the transcription lands seconds later and updates
+	// this row by message_id, which has to exist by then.
+	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() {
+		go a.handleVoiceMessage(msg, audio)
+	}
 }
 
 func (a *App) handleEdit(msg *events.Message, protoMsg *waE2E.ProtocolMessage) {

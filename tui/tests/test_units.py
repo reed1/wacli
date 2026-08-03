@@ -26,6 +26,7 @@ def test_message_from_data_defaults():
         "message_id",
         "message_type",
         "media_file",
+        "transcription",
         "original_text",
         "is_deleted",
         "is_from_me",
@@ -35,9 +36,19 @@ def test_message_from_data_defaults():
     assert msg.id == 0
     assert msg.message_id == ""
     assert msg.media_file is None
+    assert msg.transcription is None
     assert not msg.is_edited
     assert not msg.is_deleted
     assert not msg.is_from_me
+
+
+def test_voice_transcription_is_displayed_as_text():
+    voice = message_from_data(make_message(message_type="Voice", text="", transcription="halo mas"))
+    assert voice.display_text == "halo mas"
+    assert "[Voice] halo mas" in format_entry_plain(voice)
+
+    captioned = message_from_data(make_message(text="caption", transcription="halo mas"))
+    assert captioned.display_text == "caption"
 
 
 def test_message_title():

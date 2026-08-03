@@ -1,5 +1,5 @@
 #!/bin/bash
-# Transcription script - output is sent as WhatsApp reply verbatim
+# Transcription script - output is stored on the message row and sent as a WhatsApp reply
 # Future: integrate with speech-to-text service
 
 if [ -z "$1" ]; then

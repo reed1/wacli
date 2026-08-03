@@ -18,7 +18,7 @@ response=$(curl -s "https://api.groq.com/openai/v1/audio/transcriptions" \
 text=$(echo "$response" | jq -r '.text // empty')
 
 if [ -n "$text" ]; then
-    echo "Automated Transcription: $text"
+    echo "$text"
 else
     echo "Error: $response" >&2
     exit 1

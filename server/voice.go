@@ -13,7 +13,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const voiceFileMaxAgeDays = 5
+const (
+	voiceFileMaxAgeDays = 5
+	voiceReplyPrefix    = "Automated Transcription: "
+)
 
 func (a *App) handleVoiceMessage(msg *events.Message, audio *waE2E.AudioMessage) {
 	if a.config.TranscriptionScript == "" {
@@ -50,9 +53,24 @@ func (a *App) handleVoiceMessage(msg *events.Message, audio *waE2E.AudioMessage)
 		return
 	}
 
-	a.sendVoiceReply(msg, strings.TrimSpace(result))
+	text := strings.TrimSpace(result)
+	a.saveTranscription(msg.Info.ID, text)
+	a.sendVoiceReply(msg, voiceReplyPrefix+text)
 
 	go a.cleanupOldVoiceFiles()
+}
+
+func (a *App) saveTranscription(messageID, text string) {
+	res, err := a.msgDB.Exec(
+		`UPDATE messages SET transcription = ? WHERE message_id = ?`,
+		text, messageID,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to save transcription for %s: %v\n", messageID, err)
+		return
+	}
+	n, _ := res.RowsAffected()
+	vlogf("  saved transcription: target=%s text=%q rows=%d", messageID, text, n)
 }
 
 func (a *App) getVoiceDir() string {

@@ -17,9 +17,14 @@ class Message:
     message_type: str
     text: str
     media_file: str | None = None
+    transcription: str | None = None
     is_from_me: bool = False
     original_text: str | None = None
     is_deleted: bool = False
+
+    @property
+    def display_text(self) -> str:
+        return self.text or self.transcription or ""
 
     @property
     def is_edited(self) -> bool:

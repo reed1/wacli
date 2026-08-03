@@ -52,7 +52,7 @@ def format_entry_title(entry: "Entry", search_query: str = "") -> str:
 
 def format_entry_plain(entry: "Entry") -> str:
     if isinstance(entry, Message):
-        text = strip_mentions(entry.text).replace("\n", " ")
+        text = strip_mentions(entry.display_text).replace("\n", " ")
         type_prefix = f"[{entry.message_type}] " if entry.message_type else ""
         if entry.is_group and not entry.is_from_me:
             return (
@@ -90,7 +90,7 @@ class EntryWidget(Static):
         query = getattr(self.app, "search_query", "")
         if isinstance(self.entry, Message):
             msg = self.entry
-            text_oneline = render_mentions(msg.text.replace("\n", " "), query)
+            text_oneline = render_mentions(msg.display_text.replace("\n", " "), query)
             type_prefix = f"[dim]\\[{msg.message_type}][/] " if msg.message_type else ""
             if msg.is_deleted:
                 content = f"{type_prefix}[dim]🗑 [strike]{text_oneline}[/strike][/dim]"

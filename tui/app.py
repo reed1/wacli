@@ -110,6 +110,7 @@ def message_from_data(data: dict) -> Message:
         message_type=data.get("message_type", ""),
         text=data["text"],
         media_file=data.get("media_file"),
+        transcription=data.get("transcription"),
         is_from_me=data.get("is_from_me", False),
         original_text=data.get("original_text"),
         is_deleted=data.get("is_deleted", False),
@@ -476,14 +477,14 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
-        pyperclip.copy(strip_mentions(entry.text))
+        pyperclip.copy(strip_mentions(entry.display_text))
         self.notify("Copied to clipboard")
 
     def action_open_in_vim(self) -> None:
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
-        text = strip_mentions(entry.text)
+        text = strip_mentions(entry.display_text)
         if not text.strip():
             self.notify("No text to open")
             return
@@ -527,7 +528,7 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
-        urls = re.findall(r"https?://[^\s<>\[\]]+", strip_mentions(entry.text))
+        urls = re.findall(r"https?://[^\s<>\[\]]+", strip_mentions(entry.display_text))
         if not urls:
             self.notify("No URL found")
             return
@@ -563,7 +564,7 @@ class WaCLIApp(App):
         self.compose_mode = "reply"
         quote = self.query_one(ComposeQuote)
         quote.border_title = "Quote"
-        quote_text = strip_mentions(entry.text).replace("\n", " ").replace("[", "\\[")
+        quote_text = strip_mentions(entry.display_text).replace("\n", " ").replace("[", "\\[")
         quote.update(quote_text)
         quote.add_class("visible")
         compose_input = self.query_one(ComposeInput)
@@ -755,11 +756,11 @@ class WaCLIApp(App):
         # An image carries its text as a caption inside the viewer, so it replaces the
         # text modal rather than stacking on top of it.
         if entry.media_file and Path(entry.media_file).suffix.lower() in IMAGE_EXTS:
-            caption = render_mentions(entry.text.replace("\n", " "))
+            caption = render_mentions(entry.display_text.replace("\n", " "))
             self.run_worker(self.open_media(entry.media_file, caption))
             return
-        if entry.text.strip():
-            body = render_mentions(entry.text)
+        if entry.display_text.strip():
+            body = render_mentions(entry.display_text)
             if entry.is_deleted:
                 body = f"[dim italic]🗑 deleted[/]\n\n{body}"
             if entry.is_edited:

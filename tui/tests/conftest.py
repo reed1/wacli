@@ -36,6 +36,7 @@ def make_message(**overrides) -> dict:
         "message_type": "",
         "text": "hello",
         "media_file": None,
+        "transcription": None,
         "original_text": None,
         "is_deleted": False,
     }
