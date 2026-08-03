@@ -13,4 +13,4 @@
         repo: "{{ repo_url }}"
         dest: "{{ app_dir }}"
         version: main
-      tags: [never, push-all]
+      tags: [never, push-any]
