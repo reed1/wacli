@@ -1,19 +1,12 @@
 import json
-import os
 from datetime import datetime
 from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent.parent / ".env")
 
 RUNTIME_DIR = Path("/tmp/rlocal/wacli")
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_LOG_FILE = RUNTIME_DIR / "wacli.log"
 SUBMIT_LOG_FILE = RUNTIME_DIR / "submitted.jsonl"
-
-SERVER_ADDR = (os.environ["SERVER_HOST"], int(os.environ["SERVER_PORT"]))
 
 
 def log(msg: str) -> None:

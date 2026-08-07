@@ -1,7 +1,17 @@
 #!/bin/bash
 
-set -euo pipefail
+# No -e: the disconnect exit code is handled here rather than being fatal.
+set -uo pipefail
+
+# Must match EXIT_DISCONNECTED in tui/app.py.
+DISCONNECTED=75
 
 cd "$(dirname "$0")"/tui
 
-exec python main.py
+while true; do
+    python main.py
+    code=$?
+    [ "$code" -eq "$DISCONNECTED" ] || exit "$code"
+    read -rsn 1 -p "Press any key to reconnect..."
+    echo
+done

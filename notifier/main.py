@@ -1,40 +1,21 @@
 #!/usr/bin/env python3
+"""Turns incoming WhatsApp messages into an rworkspaces attention flag.
+
+Reads the same fan-out socket the TUI reads, but only cares about `message`
+events. Exits on any disconnect; the wacli-notifier systemd unit restarts it.
+"""
 
 import json
-import os
 import socket
 import sys
-import time
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+from wacli_socket import SERVER_ADDR, enable_keepalive
 
-SERVER_ADDR = (os.environ["SERVER_HOST"], int(os.environ["SERVER_PORT"]))
 RWORKSPACES_SOCKET = "/tmp/rlocal/rworkspaces/sock"
 ATTENTION_ID = "wacli"
-
-
-def wait_for_server():
-    delays = [1, 2, 4, 8]
-    for delay in delays:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(SERVER_ADDR)
-                return True
-        except (ConnectionRefusedError, OSError):
-            print(f"Server not ready, waiting {delay}s...")
-            time.sleep(delay)
-    print("Server not ready after all retries, exiting")
-    sys.exit(1)
-
-
-def enable_keepalive(sock):
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
 
 
 def send_attention():
@@ -52,9 +33,15 @@ def send_attention():
 
 
 def main():
-    wait_for_server()
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect(SERVER_ADDR)
+    try:
+        sock = socket.create_connection(SERVER_ADDR)
+    except OSError as error:
+        # systemd retries on a 10s timer, so a server that is not up yet just
+        # means waiting for the next start.
+        print(f"Cannot reach wacli server: {error}", file=sys.stderr)
+        sys.exit(1)
+
+    with sock:
         enable_keepalive(sock)
         print("Connected to wacli server, listening for events...")
 

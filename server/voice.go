@@ -18,6 +18,10 @@ const (
 	voiceReplyPrefix    = "Automated Transcription: "
 )
 
+// Voice notes are scratch: downloaded, transcribed, then aged out, so they live
+// under the system temp dir rather than anywhere the deploy has to configure.
+var voiceDir = filepath.Join(os.TempDir(), "wacli-voice")
+
 func (a *App) handleVoiceMessage(msg *events.Message, audio *waE2E.AudioMessage) {
 	if a.config.TranscriptionScript == "" {
 		return
@@ -30,7 +34,6 @@ func (a *App) handleVoiceMessage(msg *events.Message, audio *waE2E.AudioMessage)
 		return
 	}
 
-	voiceDir := a.getVoiceDir()
 	if err := os.MkdirAll(voiceDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create voice directory: %v\n", err)
 		a.sendVoiceReply(msg, "Transcription error, please see server logs")
@@ -73,13 +76,6 @@ func (a *App) saveTranscription(messageID, text string) {
 	vlogf("  saved transcription: target=%s text=%q rows=%d", messageID, text, n)
 }
 
-func (a *App) getVoiceDir() string {
-	if a.config.VoiceMessageDir != "" {
-		return a.config.VoiceMessageDir
-	}
-	return filepath.Join(os.TempDir(), "wacli-voice")
-}
-
 func (a *App) runTranscription(filePath string) (string, error) {
 	cmd := exec.Command(a.config.TranscriptionScript, filePath)
 	output, err := cmd.Output()
@@ -107,7 +103,6 @@ func (a *App) sendVoiceReply(msg *events.Message, text string) {
 }
 
 func (a *App) cleanupOldVoiceFiles() {
-	voiceDir := a.getVoiceDir()
 	cutoff := time.Now().AddDate(0, 0, -voiceFileMaxAgeDays)
 
 	entries, err := os.ReadDir(voiceDir)

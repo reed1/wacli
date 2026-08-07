@@ -1,9 +1,10 @@
 import base64
+import socket
 import subprocess
 
 import pytest
 
-from tui.app import VIM_VIEW_PATH, WaCLIApp
+from tui.app import EXIT_DISCONNECTED, VIM_VIEW_PATH, WaCLIApp
 from tui.models import Call, Message
 from tui.widgets import (
     ComposeInput,
@@ -85,9 +86,7 @@ async def test_short_list_keeps_appended_entry_on_screen(stub_server):
 
         stub_server.send_event(
             "message",
-            make_message(
-                id=6, message_id="m6", timestamp=1700000100, text="mine", is_from_me=True
-            ),
+            make_message(id=6, message_id="m6", timestamp=1700000100, text="mine", is_from_me=True),
         )
         await wait_until(lambda: len(app.entries) == 6)
         await pilot.pause()
@@ -395,3 +394,22 @@ async def test_search(stub_server):
         await pilot.press("escape")
         assert app.search_matches == []
         assert str(app.query_one(StatusBar).render()).strip() == ""
+
+
+async def test_socket_uses_tcp_keepalive(stub_server):
+    loaded_stub(stub_server)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+        sock = app.socket_writer.get_extra_info("socket")
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+        assert sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 60
+
+
+async def test_disconnect_exits_for_restart(stub_server):
+    loaded_stub(stub_server)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+        stub_server.drop_clients()
+        await wait_until(lambda: app.return_code == EXIT_DISCONNECTED)

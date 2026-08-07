@@ -91,6 +91,12 @@ class StubServer:
         self._server.close()
         await self._server.wait_closed()
 
+    def drop_clients(self) -> None:
+        """Hangs up on every client, the way a server restart does."""
+        for writer in self.writers:
+            writer.close()
+        self.writers.clear()
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.writers.append(writer)
         self._write(writer, {"type": "connection_state", "data": {"connected": True}})

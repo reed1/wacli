@@ -19,7 +19,8 @@ from textual.notifications import Notification, Notify
 from textual.widgets import Footer, Header
 
 from tui.models import Call, Entry, Message
-from tui.utils import RUNTIME_DIR, SERVER_ADDR, log, log_submitted_message
+from tui.utils import RUNTIME_DIR, log, log_submitted_message
+from wacli_socket import SERVER_ADDR, enable_keepalive
 
 CLIPBOARD_IMAGE_PATH = RUNTIME_DIR / "clipboard_send.png"
 VIM_VIEW_PATH = RUNTIME_DIR / "message.txt"
@@ -44,6 +45,9 @@ ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 SOCKET_READ_LIMIT = 1024 * 1024
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
+
+# Tells the wacli-tui wrapper to offer a restart rather than treat this as a crash.
+EXIT_DISCONNECTED = 75
 
 REMOVE_REACTION_ID = "🚫"
 REACTION_EMOJIS = json.loads((Path(__file__).parent / "reaction_emojis.json").read_text())
@@ -320,17 +324,29 @@ class WaCLIApp(App):
         widgets[self.selected_index].scroll_visible()
 
     async def listen_socket(self) -> None:
-        log("listen_socket: connecting...")
+        # The socket is the only source of entries, so once it is gone the view is a
+        # stale snapshot. Quit and let the wacli-tui wrapper offer a restart.
+        try:
+            await self.stream_events()
+        except OSError as error:
+            log(f"stream_events: disconnected: {error}")
+            self.exit(return_code=EXIT_DISCONNECTED, message=f"Disconnected: {error}")
+
+    async def stream_events(self) -> None:
+        log("stream_events: connecting...")
         reader, writer = await asyncio.open_connection(*SERVER_ADDR, limit=SOCKET_READ_LIMIT)
+        # Without keepalive a peer that vanished without a FIN — server restart,
+        # dropped VPN route — leaves this socket ESTABLISHED and silent forever.
+        enable_keepalive(writer.get_extra_info("socket"))
         self.socket_writer = writer
-        log("listen_socket: connected, requesting entries")
+        log("stream_events: connected, requesting entries")
         writer.write(b'{"action":"get_entries"}\n')
         await writer.drain()
         while True:
             line = await reader.readline()
-            log(f"listen_socket: got line: {line}")
+            log(f"stream_events: got line: {line}")
             if not line:
-                raise ConnectionError("Socket connection closed")
+                raise ConnectionError("server closed the connection")
             event = json.loads(line.decode())
             entry_type = event["type"]
 
@@ -364,7 +380,7 @@ class WaCLIApp(App):
             if entry_type == "connection_state":
                 state = event.get("data") or {}
                 log(
-                    f"listen_socket: connection_state connected={state.get('connected')} "
+                    f"stream_events: connection_state connected={state.get('connected')} "
                     f"reason={state.get('reason', '')}"
                 )
                 continue
@@ -382,10 +398,10 @@ class WaCLIApp(App):
             entry: Entry
             if entry_type == "call":
                 entry = call_from_data(data)
-                log(f"listen_socket: parsed call from {entry.caller_name}")
+                log(f"stream_events: parsed call from {entry.caller_name}")
             elif entry_type == "message":
                 entry = message_from_data(data)
-                log(f"listen_socket: parsed message: {entry.text}")
+                log(f"stream_events: parsed message: {entry.text}")
             else:
                 raise ValueError(f"Unexpected entry type: {entry_type}")
             self.entries.append(entry)
@@ -395,7 +411,7 @@ class WaCLIApp(App):
             message_list.mount(EntryWidget(entry, selected=should_follow))
             if should_follow:
                 self.call_after_refresh(lambda: self.update_selection(len(self.entries) - 1))
-            log("listen_socket: widget mounted")
+            log("stream_events: widget mounted")
 
     def apply_message_update(self, message: Message) -> None:
         index = next(
