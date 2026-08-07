@@ -30,6 +30,7 @@ Three processes on two machines, joined by one TCP socket.
 | `wacli-server` | `sgtent:/home/reed/app/wacli/server` | `wacli-server.service` (systemd user, lingering enabled) | WhatsApp via whatsmeow; listens on `LISTEN_ADDR` |
 | `wacli-notifier` | this machine, `notifier/main.py` | `wacli-notifier.service` (systemd user) | server socket; rworkspaces Unix socket |
 | `wacli-tui` | this machine, `tui/main.py` | you, in a kitty window via the `wacli-tui` wrapper | server socket; kitty/rofi/xclip/mpv/xdg-open |
+| `wacli-send` | this machine, repo root | any script wanting to send one message | server socket, for one request/response |
 
 `scripts/print-sgtent-qr.py` SSHes to sgtent to re-pair WhatsApp. `ansible/playbooks/04b_deploy_prod/files/wait_for_wa_connected.py` is copied to the prod host at deploy time and opens the same socket just long enough to see one `connection_state` — it takes `host:port` on argv and deliberately shares no code with the clients here.
 
@@ -37,7 +38,7 @@ Three processes on two machines, joined by one TCP socket.
 
 | From | To | Type | Address |
 |---|---|---|---|
-| TUI, notifier, deploy check | server | TCP | `SERVER_HOST:SERVER_PORT` (`.env`) = `LISTEN_ADDR` on the server |
+| TUI, notifier, `wacli-send`, deploy check | server | TCP | `SERVER_HOST:SERVER_PORT` (`.env`) = `LISTEN_ADDR` on the server |
 | notifier | rworkspaces | AF_UNIX | `/tmp/rlocal/rworkspaces/sock` |
 | TUI | kitty | kitty remote control | `kitty @ launch`, for the Vim overlay |
 
@@ -87,7 +88,7 @@ Filtering happens once, server-side, before the row is inserted and broadcast (`
 | On disconnect | exits `75` | exits `1` |
 | Restarted by | the `wacli-tui` wrapper loop, after a keypress | systemd, after 10s |
 
-Both import `SERVER_ADDR` and `enable_keepalive` from `wacli_socket.py` at the repo root. That module exists because the two clients must agree on where the server is and how aggressively to probe a quiet connection; when they disagreed, one of them silently went stale (below). The notifier reaches it with a `sys.path` insert, the same trick `tui/main.py` already uses.
+Both import `SERVER_ADDR` and `enable_keepalive` from `wacli_socket.py` at the repo root. `wacli-send` takes only `SERVER_ADDR`: it opens a connection, sends one command, waits for the ack under a timeout and exits, so it is never idle long enough for keepalive to have anything to say. That module exists because the two clients must agree on where the server is and how aggressively to probe a quiet connection; when they disagreed, one of them silently went stale (below). The notifier reaches it with a `sys.path` insert, the same trick `tui/main.py` already uses.
 
 ## Disconnect handling
 
@@ -109,7 +110,7 @@ The TUI does not reconnect in place. Its whole view is built from one `get_entri
 Everything lives in the server's working directory, `/home/reed/app/wacli/server`:
 
 - `wacli.db` — whatsmeow's device/session store. Deleting it means re-pairing. Also opened read-only to answer "is this chat muted?"
-- `messages.db` — `messages` and `calls`. Both are trimmed to the newest 150 rows whenever they pass 200, so this is a rolling window, not an archive.
+- `messages.db` — `messages` and `calls`. Both are capped at a maximum entry count and trimmed back down once they pass it (`maxEntries`/`trimToCount` in `server/main.go`), so this is a rolling window, not an archive.
 - `media/` — images and video, named by content hash and extension. Files belonging to trimmed messages are deleted with them. The TUI never reads this directory; it asks for `get_media` and writes chunks into `/tmp/rlocal/wacli/`.
 - voice notes — `$TMPDIR/wacli-voice`, not configurable: they are scratch files, deleted after 5 days. `TRANSCRIPTION_SCRIPT` transcribes them and the text is written back onto the message row, which then goes out as `message_updated`.
 
@@ -119,6 +120,7 @@ Everything lives in the server's working directory, `/home/reed/app/wacli/server
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04b_deploy_prod/main.yaml --tags push-server
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04c_deploy_local/main.yaml --tags push-notifier
 python scripts/print-sgtent-qr.py          # re-pair WhatsApp
+wacli-send <chat_jid> 'text'               # send one message; "-" reads stdin
 ssh sgtent journalctl --user -u wacli-server -f
 journalctl --user -u wacli-notifier -f
 tail -f /tmp/rlocal/wacli/wacli.log        # TUI event log

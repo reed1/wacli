@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+
+"""Send one WhatsApp message through the wacli server and exit.
+
+The socket protocol lives here so callers — chord scripts, cron jobs, anything
+that wants to fire a message — only need a chat JID and some text.
+"""
+
+import argparse
+import json
+import socket
+import sys
+import uuid
+
+from wacli_socket import SERVER_ADDR
+
+TIMEOUT = 20
+
+
+def read_response(sock: socket.socket, request_id: str) -> None:
+    """Consume the fan-out stream until the ack for our request arrives."""
+    buffer = b""
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise SystemExit("wacli-send: server closed the connection before responding")
+        buffer += chunk
+
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            # connection_state and broadcast messages share this stream
+            if event.get("request_id") != request_id:
+                continue
+            if event.get("success"):
+                return
+            raise SystemExit(f"wacli-send: {event.get('error') or 'server reported failure'}")
+
+
+def send(chat_jid: str, text: str) -> None:
+    request_id = str(uuid.uuid4())
+    command = {
+        "action": "send",
+        "request_id": request_id,
+        "chat_jid": chat_jid,
+        "text": text,
+    }
+
+    try:
+        with socket.create_connection(SERVER_ADDR, timeout=TIMEOUT) as sock:
+            sock.settimeout(TIMEOUT)
+            sock.sendall((json.dumps(command) + "\n").encode())
+            read_response(sock, request_id)
+    except OSError as exc:
+        host, port = SERVER_ADDR
+        raise SystemExit(f"wacli-send: cannot reach the server at {host}:{port}: {exc}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Send a WhatsApp message through the wacli server."
+    )
+    parser.add_argument("chat_jid", help="target chat, e.g. 223454632669317@lid")
+    parser.add_argument("text", help='message body, or "-" to read it from stdin')
+    args = parser.parse_args()
+
+    text = sys.stdin.read() if args.text == "-" else args.text
+    if not text.strip():
+        raise SystemExit("wacli-send: refusing to send an empty message")
+
+    send(args.chat_jid, text)
+
+
+if __name__ == "__main__":
+    main()

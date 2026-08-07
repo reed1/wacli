@@ -48,8 +48,8 @@ func protoDump(m proto.Message) string {
 }
 
 const (
-	maxEntries               = 200
-	trimToCount              = 150
+	maxEntries               = 2000
+	trimToCount              = 1500
 	entriesLimit             = 50
 	permanentFailureExitCode = 2
 	// Upper bound for a single newline-delimited socket command. Large enough
