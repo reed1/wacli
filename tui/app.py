@@ -45,6 +45,7 @@ ChordBinding = namedtuple("ChordBinding", ["keys", "action", "description"])
 SOCKET_READ_LIMIT = 1024 * 1024
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
+CLIPBOARD_TIMEOUT = 5
 
 # Tells the wacli-tui wrapper to offer a restart rather than treat this as a crash.
 EXIT_DISCONNECTED = 75
@@ -55,9 +56,12 @@ REACTION_EMOJIS.append({"id": REMOVE_REACTION_ID, "label": "remove clear reactio
 
 
 class MediaAssembler:
+    # Chunks land in a .part file that is renamed into place only once the transfer
+    # completes, so an interrupted download can never be mistaken for a cached one.
     def __init__(self, future: asyncio.Future, path: Path) -> None:
         self.future = future
         self.path = path
+        self.partial = path.with_name(path.name + ".part")
         self.file = None
         self.next_seq = 0
 
@@ -75,7 +79,7 @@ class MediaAssembler:
         chunk_b64 = event.get("data", "")
         if chunk_b64:
             if self.file is None:
-                self.file = open(self.path, "wb")
+                self.file = open(self.partial, "wb")
             self.file.write(base64.b64decode(chunk_b64))
 
         if event.get("done"):
@@ -83,7 +87,8 @@ class MediaAssembler:
                 self.file.close()
                 self.file = None
             else:
-                self.path.write_bytes(b"")
+                self.partial.write_bytes(b"")
+            self.partial.replace(self.path)
             if not self.future.done():
                 self.future.set_result(None)
 
@@ -91,12 +96,17 @@ class MediaAssembler:
         if self.file is not None:
             self.file.close()
             self.file = None
-        try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+        self.partial.unlink(missing_ok=True)
         if not self.future.done():
             self.future.set_exception(RuntimeError(msg))
+
+
+def is_image_message(entry: Entry) -> bool:
+    return (
+        isinstance(entry, Message)
+        and bool(entry.media_file)
+        and Path(entry.media_file).suffix.lower() in IMAGE_EXTS
+    )
 
 
 def message_from_data(data: dict) -> Message:
@@ -202,7 +212,7 @@ class WaCLIApp(App):
         PaletteCommand("Reply", "compose_reply", "Reply to the selected message"),
         PaletteCommand("React", "react", "Send an emoji reaction to the selected message"),
         PaletteCommand("Send image", "send_image", "Send the clipboard image to the selected chat"),
-        PaletteCommand("Copy", "copy_message", "Copy the selected message to the clipboard"),
+        PaletteCommand("Copy", "copy_message", "Copy the selected message text or image"),
         PaletteCommand("Open in Vim", "open_in_vim", "View the selected message text in Vim"),
         PaletteCommand("View", "show_message", "Open the selected message or its media"),
         PaletteCommand("Open URL", "open_url", "Open links found in the selected message"),
@@ -493,8 +503,38 @@ class WaCLIApp(App):
         entry = self.get_selected_entry()
         if not entry or isinstance(entry, Call):
             return
+        if is_image_message(entry):
+            self.run_worker(self.copy_image(entry))
+            return
         pyperclip.copy(strip_mentions(entry.display_text))
         self.notify("Copied to clipboard")
+
+    async def copy_image(self, entry: Message) -> None:
+        local_path = await self.fetch_media(entry.media_file)
+        if local_path is None:
+            return
+        # The clipboard carries a file:// pointer, not the pixels: a photo runs to megabytes
+        # and every paste target worth having reads text/uri-list. copyq is the only local
+        # tool that can advertise several targets at once, so text/plain rides along and a
+        # captioned image still pastes its caption into a text field.
+        caption = strip_mentions(entry.display_text).strip()
+        command = [
+            "copyq",
+            "copy",
+            "text/uri-list",
+            local_path.as_uri(),
+            "text/plain",
+            caption or str(local_path),
+        ]
+        try:
+            subprocess.run(command, capture_output=True, check=True, timeout=CLIPBOARD_TIMEOUT)
+        except FileNotFoundError:
+            self.notify("copyq not found", severity="error")
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            self.notify("Could not set clipboard", severity="error")
+            return
+        self.notify("Copied image and caption" if caption else "Copied image")
 
     def action_open_in_vim(self) -> None:
         entry = self.get_selected_entry()
@@ -650,7 +690,7 @@ class WaCLIApp(App):
             result = subprocess.run(
                 ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
                 capture_output=True,
-                timeout=5,
+                timeout=CLIPBOARD_TIMEOUT,
             )
         except FileNotFoundError:
             self.notify("xclip not found", severity="error")
@@ -771,7 +811,7 @@ class WaCLIApp(App):
             return
         # An image carries its text as a caption inside the viewer, so it replaces the
         # text modal rather than stacking on top of it.
-        if entry.media_file and Path(entry.media_file).suffix.lower() in IMAGE_EXTS:
+        if is_image_message(entry):
             caption = render_mentions(entry.display_text.replace("\n", " "))
             self.run_worker(self.open_media(entry.media_file, caption))
             return
@@ -792,16 +832,12 @@ class WaCLIApp(App):
         if entry.media_file:
             self.run_worker(self.open_media(entry.media_file))
 
-    async def open_media(self, media_file: str, caption: str = "") -> None:
+    async def fetch_media(self, media_file: str) -> Path | None:
+        """Downloads media into RUNTIME_DIR once. Server filenames are content-stable
+        UUIDs, so an existing file is always the right bytes and needs no refetch."""
         local_path = RUNTIME_DIR / media_file
-        ext = local_path.suffix.lower()
-        if ext in IMAGE_EXTS:
-            kind = "image"
-        elif ext in VIDEO_EXTS:
-            kind = "video"
-        else:
-            self.notify(f"No viewer for {ext or 'unknown type'}", severity="error")
-            return
+        if local_path.exists():
+            return local_path
 
         request_id = str(uuid.uuid4())
         future: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -817,6 +853,22 @@ class WaCLIApp(App):
         except Exception:
             self.media_assemblers.pop(request_id, None)
             self.notify("Media could not be fetched", severity="error")
+            return None
+
+        return local_path
+
+    async def open_media(self, media_file: str, caption: str = "") -> None:
+        local_path = RUNTIME_DIR / media_file
+        ext = local_path.suffix.lower()
+        if ext in IMAGE_EXTS:
+            kind = "image"
+        elif ext in VIDEO_EXTS:
+            kind = "video"
+        else:
+            self.notify(f"No viewer for {ext or 'unknown type'}", severity="error")
+            return
+
+        if await self.fetch_media(media_file) is None:
             return
 
         if kind == "image":

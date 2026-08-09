@@ -2,10 +2,12 @@ import base64
 import socket
 import subprocess
 
+import pyperclip
 import pytest
 
 from tui.app import EXIT_DISCONNECTED, VIM_VIEW_PATH, WaCLIApp
 from tui.models import Call, Message
+from tui.utils import RUNTIME_DIR
 from tui.widgets import (
     ComposeInput,
     EntryWidget,
@@ -341,6 +343,94 @@ async def test_view_image_message_opens_inline_viewer(stub_server):
         await pilot.pause()
         await pilot.press("escape")
         await wait_until(lambda: not app.query(ImageViewer))
+
+
+def stub_copyq(monkeypatch) -> list[list[str]]:
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return commands
+
+
+def image_entry(stub_server, filename: str, text: str) -> None:
+    loaded_stub(stub_server)
+    stub_server.entries["entries"][2]["message"]["media_file"] = filename
+    stub_server.entries["entries"][2]["message"]["text"] = text
+    stub_server.media[filename] = png_bytes()
+
+
+async def test_yank_image_puts_a_file_pointer_on_the_clipboard(stub_server, monkeypatch):
+    image_entry(stub_server, "yank-caption.png", "a caption")
+    local = RUNTIME_DIR / "yank-caption.png"
+    local.unlink(missing_ok=True)
+    commands = stub_copyq(monkeypatch)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("y")
+        await wait_until(lambda: bool(commands))
+
+    assert commands[0] == [
+        "copyq",
+        "copy",
+        "text/uri-list",
+        local.as_uri(),
+        "text/plain",
+        "a caption",
+    ]
+    assert local.read_bytes() == png_bytes()
+
+
+async def test_yank_uncaptioned_image_falls_back_to_the_path_as_text(stub_server, monkeypatch):
+    image_entry(stub_server, "yank-bare.png", "")
+    local = RUNTIME_DIR / "yank-bare.png"
+    local.unlink(missing_ok=True)
+    commands = stub_copyq(monkeypatch)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("y")
+        await wait_until(lambda: bool(commands))
+
+    assert commands[0][-2:] == ["text/plain", str(local)]
+
+
+async def test_yank_image_reuses_the_cached_download(stub_server, monkeypatch):
+    image_entry(stub_server, "yank-cached.png", "")
+    (RUNTIME_DIR / "yank-cached.png").write_bytes(png_bytes())
+    commands = stub_copyq(monkeypatch)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("y")
+        await wait_until(lambda: bool(commands))
+
+    assert all(cmd["action"] != "get_media" for cmd in stub_server.commands)
+
+
+async def test_yank_video_message_still_copies_text(stub_server, monkeypatch):
+    loaded_stub(stub_server)
+    stub_server.entries["entries"][2]["message"]["media_file"] = "clip.mp4"
+    stub_server.entries["entries"][2]["message"]["text"] = "watch this"
+    commands = stub_copyq(monkeypatch)
+    copied = []
+    monkeypatch.setattr(pyperclip, "copy", copied.append)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("y")
+        await wait_until(lambda: bool(copied))
+
+    assert copied == ["watch this"]
+    assert commands == []
 
 
 async def test_view_message_modal_titles_the_border_with_sender_and_group(stub_server):
