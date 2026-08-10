@@ -149,6 +149,8 @@ class ComposeInput(TextArea):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
+        Binding("alt+left", "cursor_word_left", "Word left", show=False),
+        Binding("alt+right", "cursor_word_right", "Word right", show=False),
     ]
 
     app: "WaCLIApp"
