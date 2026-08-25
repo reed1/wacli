@@ -1,0 +1,47 @@
+- name: Bump whatsmeow
+  hosts: local
+  tasks:
+    - name: Read current whatsmeow version
+      ansible.builtin.command:
+        cmd: go list -m go.mau.fi/whatsmeow
+        chdir: "{{ wacli_dir }}/server"
+      register: whatsmeow_before
+      changed_when: false
+      tags: [never, push-bump-whatsmeow]
+
+    - name: Update whatsmeow
+      ansible.builtin.command:
+        cmd: go get -u go.mau.fi/whatsmeow
+        chdir: "{{ wacli_dir }}/server"
+      tags: [never, push-bump-whatsmeow]
+
+    - name: Tidy go.mod
+      ansible.builtin.command:
+        cmd: go mod tidy
+        chdir: "{{ wacli_dir }}/server"
+      tags: [never, push-bump-whatsmeow]
+
+    - name: Read updated whatsmeow version
+      ansible.builtin.command:
+        cmd: go list -m go.mau.fi/whatsmeow
+        chdir: "{{ wacli_dir }}/server"
+      register: whatsmeow_after
+      changed_when: false
+      tags: [never, push-bump-whatsmeow]
+
+    # Building here is the whole point of the bump: a client version WhatsApp rejects
+    # with 405 is only worth committing if it still compiles.
+    - name: Build Go binary
+      ansible.builtin.command:
+        cmd: go build
+        chdir: "{{ wacli_dir }}/server"
+      tags: [never, push-bump-whatsmeow]
+
+    - name: Report the bump
+      ansible.builtin.debug:
+        msg: >-
+          whatsmeow {{ whatsmeow_before.stdout.split() | last }} -> {{ whatsmeow_after.stdout.split() | last }}.
+          {{ 'Already current, nothing to commit.'
+             if whatsmeow_before.stdout == whatsmeow_after.stdout
+             else 'Commit server/go.mod and server/go.sum, then: pt push prod server' }}
+      tags: [never, push-bump-whatsmeow]
