@@ -17,6 +17,14 @@ func TestExtractMessage(t *testing.T) {
 		{"nil", nil, "Unhandled", ""},
 		{"empty", &waE2E.Message{}, "Unhandled", ""},
 		{
+			"unknown type is named",
+			&waE2E.Message{
+				PollUpdateMessage:  &waE2E.PollUpdateMessage{},
+				MessageContextInfo: &waE2E.MessageContextInfo{},
+			},
+			"Unhandled: pollUpdateMessage", "",
+		},
+		{
 			"conversation",
 			&waE2E.Message{Conversation: proto.String("hello")},
 			"", "hello",

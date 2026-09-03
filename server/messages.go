@@ -121,6 +121,11 @@ func (a *App) handleMessage(msg *events.Message) {
 		return
 	}
 
+	if isSenderKeyDistribution(msg.Message) {
+		vlogf("  dropped: sender key distribution copy of %s", msg.Info.ID)
+		return
+	}
+
 	chatJID := msg.Info.Chat
 
 	if chatJID.Server == "broadcast" && !a.config.IncludeStatusMessages {

@@ -122,6 +122,33 @@ func TestHandleMessageDropsBroadcastStatus(t *testing.T) {
 	}
 }
 
+func TestHandleMessageDropsSenderKeyDistributionCopy(t *testing.T) {
+	a := newTestApp(t)
+	_, lines := a.attachConn(t)
+
+	evt := incomingText("grp1", "111", "")
+	evt.Message = &waE2E.Message{
+		SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{
+			GroupID: proto.String("120@g.us"),
+		},
+		MessageContextInfo: &waE2E.MessageContextInfo{},
+	}
+	a.handleMessage(evt)
+
+	expectNoLine(t, lines)
+	if got := countMessages(t, a); got != 0 {
+		t.Errorf("key distribution copy was saved, count = %d", got)
+	}
+
+	evt.Message.Conversation = proto.String("real content")
+	a.handleMessage(evt)
+
+	_, data := decodeEvent(t, recvLine(t, lines))
+	if data.Text != "real content" {
+		t.Errorf("text = %q, want the content copy to still be saved", data.Text)
+	}
+}
+
 func editEvent(targetID, newText string) *events.Message {
 	return &events.Message{
 		Info: types.MessageInfo{

@@ -1,6 +1,63 @@
 package main
 
-import "go.mau.fi/whatsmeow/proto/waE2E"
+import (
+	"sort"
+	"strings"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"google.golang.org/protobuf/reflect/protoreflect"
+)
+
+// Fields WhatsApp attaches as transport plumbing rather than as something a
+// human sent. A payload carrying only these is not worth showing.
+var transportOnlyFields = map[string]bool{
+	"senderKeyDistributionMessage": true,
+	"messageContextInfo":           true,
+}
+
+// A group message is encrypted twice and whatsmeow dispatches each copy as its
+// own event under the same message ID: one copy holds the content, the other
+// only the sender key that lets future messages be decrypted. Without this the
+// second copy is stored as a duplicate "Unhandled" entry beside the real one.
+func isSenderKeyDistribution(msg *waE2E.Message) bool {
+	if msg.GetSenderKeyDistributionMessage() == nil {
+		return false
+	}
+	for _, name := range populatedFields(msg) {
+		if !transportOnlyFields[name] {
+			return false
+		}
+	}
+	return true
+}
+
+func populatedFields(msg *waE2E.Message) []string {
+	if msg == nil {
+		return nil
+	}
+	var names []string
+	msg.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		names = append(names, fd.JSONName())
+		return true
+	})
+	sort.Strings(names)
+	return names
+}
+
+// Names the fields that were actually set, so an entry rendered as "Unhandled"
+// says what it was carrying instead of leaving it to be guessed at.
+func unhandledType(msg *waE2E.Message) string {
+	var named []string
+	for _, name := range populatedFields(msg) {
+		if !transportOnlyFields[name] {
+			named = append(named, name)
+		}
+	}
+	if len(named) == 0 {
+		return "Unhandled"
+	}
+	return "Unhandled: " + strings.Join(named, ", ")
+}
 
 func extractMessage(msg *waE2E.Message) (msgType, text string) {
 	if msg == nil {
@@ -77,5 +134,5 @@ func extractMessage(msg *waE2E.Message) (msgType, text string) {
 	if event := msg.GetEventMessage(); event != nil {
 		return "Event", event.GetName()
 	}
-	return "Unhandled", ""
+	return unhandledType(msg), ""
 }
