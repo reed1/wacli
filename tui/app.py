@@ -259,6 +259,7 @@ class WaCLIApp(App):
         self.selected_index: int = -1
         self.socket_writer: asyncio.StreamWriter | None = None
         self.compose_mode: str | None = None
+        self.compose_target: Message | None = None
         self.pending_request_id: str | None = None
         self.pending_image_chat: tuple[str, str] | None = None
         self.pending_image_toast: Notification | None = None
@@ -417,7 +418,10 @@ class WaCLIApp(App):
             self.entries.append(entry)
             message_list = self.query_one(MessageList)
             force_follow = isinstance(entry, Message) and entry.is_from_me
-            should_follow = force_follow or self.selected_index == len(self.entries) - 2
+            # An arriving message must not drag the selection off the message being
+            # composed against, which is still on screen behind the compose box.
+            at_bottom = self.compose_mode is None and self.selected_index == len(self.entries) - 2
+            should_follow = force_follow or at_bottom
             message_list.mount(EntryWidget(entry, selected=should_follow))
             if should_follow:
                 self.call_after_refresh(lambda: self.update_selection(len(self.entries) - 1))
@@ -606,6 +610,7 @@ class WaCLIApp(App):
         if isinstance(entry, Call):
             return
         self.compose_mode = "send"
+        self.compose_target = entry
         compose_input = self.query_one(ComposeInput)
         compose_input.border_title = f"Message to {entry.chat_name}"
         compose_input.add_class("visible")
@@ -618,6 +623,7 @@ class WaCLIApp(App):
         if isinstance(entry, Call):
             return
         self.compose_mode = "reply"
+        self.compose_target = entry
         quote = self.query_one(ComposeQuote)
         quote.border_title = "Quote"
         quote_text = strip_mentions(entry.display_text).replace("\n", " ").replace("[", "\\[")
@@ -760,6 +766,7 @@ class WaCLIApp(App):
         compose_input.remove_class("visible")
         self.query_one(ComposeQuote).remove_class("visible")
         self.compose_mode = None
+        self.compose_target = None
 
     async def submit_compose(self) -> None:
         compose_input = self.query_one(ComposeInput)
@@ -768,8 +775,10 @@ class WaCLIApp(App):
             self.hide_compose()
             return
 
-        entry = self.get_selected_entry()
-        if not entry or isinstance(entry, Call):
+        # The target is pinned when the box opens: an arriving message moves the
+        # selection under it, and re-reading it here would misdeliver the message.
+        entry = self.compose_target
+        if not entry:
             self.hide_compose()
             return
 

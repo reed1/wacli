@@ -503,3 +503,66 @@ async def test_disconnect_exits_for_restart(stub_server):
         await wait_until(lambda: len(app.entries) == 3)
         stub_server.drop_clients()
         await wait_until(lambda: app.return_code == EXIT_DISCONNECTED)
+
+
+async def test_compose_send_targets_chat_pinned_when_box_opened(stub_server):
+    loaded_stub(stub_server)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("enter")
+        stub_server.send_event(
+            "message",
+            make_message(
+                id=4,
+                message_id="m4",
+                timestamp=1700000100,
+                chat_jid="999@s.whatsapp.net",
+                chat_name="Carol",
+                sender_jid="999@s.whatsapp.net",
+                sender_name="Carol",
+                text="interrupting",
+            ),
+        )
+        await wait_until(lambda: len(app.entries) == 4)
+        assert app.selected_index == 2
+
+        await pilot.press("h", "i")
+        await pilot.press("enter")
+
+        cmd = await stub_server.wait_for_command("send")
+        assert cmd["chat_jid"] == "111@s.whatsapp.net"
+        assert cmd["text"] == "hi"
+
+
+async def test_compose_reply_quotes_message_pinned_when_box_opened(stub_server):
+    loaded_stub(stub_server)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+
+        await pilot.press("r")
+        stub_server.send_event(
+            "message",
+            make_message(
+                id=4,
+                message_id="m4",
+                timestamp=1700000100,
+                chat_jid="999@s.whatsapp.net",
+                chat_name="Carol",
+                sender_jid="999@s.whatsapp.net",
+                sender_name="Carol",
+                text="interrupting",
+            ),
+        )
+        await wait_until(lambda: len(app.entries) == 4)
+
+        await pilot.press("o", "k")
+        await pilot.press("enter")
+
+        cmd = await stub_server.wait_for_command("reply")
+        assert cmd["chat_jid"] == "111@s.whatsapp.net"
+        assert cmd["message_id"] == "m3"
+        assert cmd["sender_jid"] == "111@s.whatsapp.net"
+        assert cmd["text"] == "ok"
