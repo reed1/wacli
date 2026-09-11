@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -90,6 +91,7 @@ type Message struct {
 	IsGroup       bool    `json:"is_group"`
 	IsMuted       bool    `json:"is_muted"`
 	IsReplyToMe   bool    `json:"is_reply_to_me"`
+	Mention       string  `json:"mention"`
 	IsFromMe      bool    `json:"is_from_me"`
 	MessageType   string  `json:"message_type"`
 	Text          string  `json:"text"`
@@ -136,15 +138,15 @@ func (a *App) handleMessage(msg *events.Message) {
 	isFromMe := msg.Info.IsFromMe
 	isMuted := a.isMuted(chatJID)
 	isArchived := a.isArchived(chatJID)
-	isMentioned := a.isMentioned(msg)
+	mention := a.mentionOf(msg)
 	isReplyToMe := a.isReplyToMe(msg)
 
-	if isMuted && !isMentioned && !isReplyToMe && !isFromMe && !a.config.IncludeMutedMessages {
+	if isMuted && mention == mentionNone && !isReplyToMe && !isFromMe && !a.config.IncludeMutedMessages {
 		vlogf("  dropped: muted chat, not mentioned/reply-to-me")
 		return
 	}
 
-	if isArchived && !isMentioned && !isReplyToMe && !isFromMe {
+	if isArchived && mention == mentionNone && !isReplyToMe && !isFromMe {
 		vlogf("  dropped: archived chat, not mentioned/reply-to-me")
 		return
 	}
@@ -182,6 +184,7 @@ func (a *App) handleMessage(msg *events.Message) {
 		IsGroup:     msg.Info.IsGroup,
 		IsMuted:     isMuted,
 		IsReplyToMe: isReplyToMe,
+		Mention:     mention,
 		IsFromMe:    isFromMe,
 		MessageType: msgType,
 		Text:        text,
@@ -334,6 +337,31 @@ func (a *App) isMentioned(msg *events.Message) bool {
 		}
 	}
 	return false
+}
+
+const (
+	mentionNone = ""
+	mentionMe   = "me"
+	mentionAll  = "all"
+)
+
+// Naming me directly outranks mentioning everyone when a message does both.
+func (a *App) mentionOf(msg *events.Message) string {
+	if a.isMentioned(msg) {
+		return mentionMe
+	}
+	if _, text := extractMessage(msg.Message); mentionsEveryone(text) {
+		return mentionAll
+	}
+	return mentionNone
+}
+
+var everyoneMentionRE = regexp.MustCompile(`(?i)(^|\s)@all\b`)
+
+// WhatsApp's mention-all carries no JID in MentionedJID, only the literal
+// "@all" in the text, so it is recognized the same way a typed "@all" is.
+func mentionsEveryone(text string) bool {
+	return everyoneMentionRE.MatchString(text)
 }
 
 func (a *App) isReplyToMe(msg *events.Message) bool {

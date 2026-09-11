@@ -14,6 +14,7 @@ class Message:
     is_group: bool
     is_muted: bool
     is_reply_to_me: bool
+    mention: str
     message_type: str
     text: str
     media_file: str | None = None
@@ -36,13 +37,24 @@ class Message:
         return dt.strftime("%H:%M")
 
     @property
+    def mention_marker(self) -> str:
+        if self.mention == "me":
+            return "❗ "
+        elif self.mention == "all":
+            return "📢 "
+        elif self.mention == "":
+            return ""
+        else:
+            raise ValueError(f"Unexpected mention: {self.mention}")
+
+    @property
     def title(self) -> str:
         if self.is_from_me:
             if self.is_group:
                 return f"→ 👥 {self.chat_name}"
             return f"→ {self.chat_name}"
-        prefix = "↩ " if self.is_reply_to_me else ""
-        return f"{prefix}{self.sender_name}"
+        reply_marker = "↩ " if self.is_reply_to_me else ""
+        return f"{self.mention_marker}{reply_marker}{self.sender_name}"
 
 
 @dataclass

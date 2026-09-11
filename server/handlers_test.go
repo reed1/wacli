@@ -106,6 +106,32 @@ func TestHandleMessageKeepsMutedWhenMentioned(t *testing.T) {
 	if !data.IsMuted {
 		t.Error("is_muted flag should be set")
 	}
+	if data.Mention != mentionMe {
+		t.Errorf("mention = %q, want %q", data.Mention, mentionMe)
+	}
+}
+
+func TestHandleMessageKeepsMutedWhenMentioningEveryone(t *testing.T) {
+	a := newTestApp(t)
+	_, lines := a.attachConn(t)
+
+	chat := types.JID{User: "111", Server: types.DefaultUserServer}
+	a.chatSettings.settings[chat] = types.LocalChatSettings{Found: true, MutedUntil: store.MutedForever}
+
+	a.handleMessage(incomingText("all1", "111", "@all all"))
+
+	_, data := decodeEvent(t, recvLine(t, lines))
+	if data.Mention != mentionAll || !data.IsMuted {
+		t.Errorf("payload = %+v, want mention %q and is_muted", data, mentionAll)
+	}
+
+	var mention string
+	if err := a.msgDB.QueryRow("SELECT mention FROM messages WHERE message_id = ?", "all1").Scan(&mention); err != nil {
+		t.Fatalf("saved row: %v", err)
+	}
+	if mention != mentionAll {
+		t.Errorf("saved mention = %q, want %q", mention, mentionAll)
+	}
 }
 
 func TestHandleMessageDropsBroadcastStatus(t *testing.T) {

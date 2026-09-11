@@ -121,6 +121,7 @@ def message_from_data(data: dict) -> Message:
         is_group=data["is_group"],
         is_muted=data["is_muted"],
         is_reply_to_me=data["is_reply_to_me"],
+        mention=data["mention"],
         message_type=data.get("message_type", ""),
         text=data["text"],
         media_file=data.get("media_file"),

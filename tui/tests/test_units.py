@@ -58,6 +58,17 @@ def test_message_title():
     reply = message_from_data(make_message(is_reply_to_me=True, sender_name="Alice"))
     assert reply.title == "↩ Alice"
 
+    mentioned = message_from_data(
+        make_message(mention="me", is_reply_to_me=True, sender_name="Alice")
+    )
+    assert mentioned.title == "❗ ↩ Alice"
+
+    everyone = message_from_data(make_message(mention="all", sender_name="Alice"))
+    assert everyone.title == "📢 Alice"
+
+    with pytest.raises(ValueError, match="bogus"):
+        _ = message_from_data(make_message(mention="bogus")).title
+
     mine = message_from_data(make_message(is_from_me=True, chat_name="Chat"))
     assert mine.title == "→ Chat"
 
@@ -71,6 +82,11 @@ def test_strip_and_render_mentions():
     rendered = render_mentions(text)
     assert "[bold green]@Alice[/]" in rendered
     assert "<mention" not in rendered
+
+
+def test_render_mentions_highlights_everyone():
+    assert render_mentions("bisa gak @all ?") == "bisa gak [bold green]@all[/] ?"
+    assert render_mentions("@allah x@all") == "@allah x@all"
 
 
 def test_render_mentions_escapes_and_highlights():

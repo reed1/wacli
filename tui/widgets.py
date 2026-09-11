@@ -12,6 +12,7 @@ from tui.kitty_image import KittyImage
 from tui.models import Call, Entry, Message
 
 MENTION_RE = re.compile(r'<mention jid="[^"]*" name="([^"]*)"/>')
+EVERYONE_MENTION_RE = re.compile(r"(?<!\S)(@all)\b", re.IGNORECASE)
 
 
 def _highlight(escaped: str, query: str) -> str:
@@ -22,12 +23,24 @@ def _highlight(escaped: str, query: str) -> str:
     )
 
 
+def _render_text(text: str, search_query: str) -> str:
+    parts = EVERYONE_MENTION_RE.split(text)
+    return "".join(
+        (
+            f"[bold green]{_highlight(part, search_query)}[/]"
+            if i % 2
+            else _highlight(part.replace("[", "\\["), search_query)
+        )
+        for i, part in enumerate(parts)
+    )
+
+
 def render_mentions(text: str, search_query: str = "") -> str:
     parts = MENTION_RE.split(text)
     result = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            result.append(_highlight(part.replace("[", "\\["), search_query))
+            result.append(_render_text(part, search_query))
         else:
             name = part.replace("[", "\\[")
             result.append(f"[bold green]@{_highlight(name, search_query)}[/]")

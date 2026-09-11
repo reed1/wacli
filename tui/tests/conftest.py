@@ -32,6 +32,7 @@ def make_message(**overrides) -> dict:
         "is_group": False,
         "is_muted": False,
         "is_reply_to_me": False,
+        "mention": "",
         "is_from_me": False,
         "message_type": "",
         "text": "hello",

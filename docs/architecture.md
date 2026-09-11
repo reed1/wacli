@@ -77,6 +77,7 @@ Filtering happens once, server-side, before the row is inserted and broadcast (`
 
 - status broadcasts (`@broadcast` JIDs) are dropped unless `INCLUDE_STATUS_MESSAGES=true`
 - muted chats are dropped unless the message mentions you, replies to you, or is from you — unless `INCLUDE_MUTED_MESSAGES=true`
+- a mention counts whether it names you or is `@all`; WhatsApp's mention-all carries no JID, so `@all` is matched in the text, and a typed `@all` counts too. The message's `mention` is `me`, `all` or empty — naming you wins when a message does both — and the TUI marks them `❗` and `📢` before the sender
 
 ## How each client uses the stream
 

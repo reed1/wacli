@@ -56,6 +56,50 @@ func TestIsMentioned(t *testing.T) {
 	}
 }
 
+func TestMentionsEveryone(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"@all all", true},
+		{"bisa gak @all ?", true},
+		{"@All meeting now", true},
+		{"hi all", false},
+		{"@allah", false},
+		{"mail x@all.com", false},
+	}
+	for _, tt := range tests {
+		if got := mentionsEveryone(tt.text); got != tt.want {
+			t.Errorf("mentionsEveryone(%q) = %v, want %v", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestMentionOf(t *testing.T) {
+	a := newTestApp(t)
+	me := a.myJID.ToNonAD().String()
+
+	tests := []struct {
+		name string
+		msg  *waE2E.Message
+		want string
+	}{
+		{"no mention", textWithMentions("hi all"), mentionNone},
+		{"someone else", textWithMentions("@999", "999@s.whatsapp.net"), mentionNone},
+		{"me", textWithMentions("hey @me", me), mentionMe},
+		{"everyone", textWithMentions("@all all"), mentionAll},
+		{"everyone as plain conversation", &waE2E.Message{Conversation: proto.String("bisa gak @all ?")}, mentionAll},
+		{"me outranks everyone", textWithMentions("@all @me", me), mentionMe},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := a.mentionOf(&events.Message{Message: tt.msg}); got != tt.want {
+				t.Errorf("mentionOf() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsReplyToMe(t *testing.T) {
 	a := newTestApp(t)
 

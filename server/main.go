@@ -256,6 +256,7 @@ func initMessageDB(dsn string) (*sql.DB, error) {
 			is_group INTEGER NOT NULL,
 			is_muted INTEGER NOT NULL,
 			is_reply_to_me INTEGER NOT NULL,
+			mention TEXT NOT NULL DEFAULT '',
 			is_from_me INTEGER NOT NULL DEFAULT 0,
 			message_type TEXT NOT NULL DEFAULT '',
 			text TEXT NOT NULL,
@@ -475,11 +476,11 @@ func (a *App) broadcastMessageUpdate(messageID string) {
 	var msg Message
 	var isGroup, isMuted, isReplyToMe, isFromMe, isDeleted int
 	err := a.msgDB.QueryRow(
-		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, transcription, original_text, is_deleted
+		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, mention, is_from_me, message_type, text, media_file, transcription, original_text, is_deleted
 		 FROM messages WHERE message_id = ?`,
 		messageID,
 	).Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName,
-		&isGroup, &isMuted, &isReplyToMe, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.Transcription, &msg.OriginalText, &isDeleted)
+		&isGroup, &isMuted, &isReplyToMe, &msg.Mention, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.Transcription, &msg.OriginalText, &isDeleted)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load updated message %s: %v\n", messageID, err)
 		return
@@ -535,7 +536,7 @@ type EntriesData struct {
 
 func (a *App) recentMessages(limit int) ([]Message, error) {
 	rows, err := a.msgDB.Query(
-		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, is_from_me, message_type, text, media_file, transcription, original_text, is_deleted
+		`SELECT id, message_id, timestamp, chat_jid, chat_name, sender_jid, sender_name, is_group, is_muted, is_reply_to_me, mention, is_from_me, message_type, text, media_file, transcription, original_text, is_deleted
 		 FROM (SELECT * FROM messages ORDER BY timestamp DESC, id DESC LIMIT ?) ORDER BY timestamp, id`,
 		limit,
 	)
@@ -548,7 +549,7 @@ func (a *App) recentMessages(limit int) ([]Message, error) {
 	for rows.Next() {
 		var msg Message
 		var isGroup, isMuted, isReplyToMe, isFromMe, isDeleted int
-		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.Transcription, &msg.OriginalText, &isDeleted); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.MessageID, &msg.Timestamp, &msg.ChatJID, &msg.ChatName, &msg.SenderJID, &msg.SenderName, &isGroup, &isMuted, &isReplyToMe, &msg.Mention, &isFromMe, &msg.MessageType, &msg.Text, &msg.MediaFile, &msg.Transcription, &msg.OriginalText, &isDeleted); err != nil {
 			return nil, err
 		}
 		msg.IsGroup = isGroup != 0
