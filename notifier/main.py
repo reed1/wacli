@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Turns incoming WhatsApp messages into an rworkspaces attention flag.
+"""Drives an rworkspaces attention flag from the WhatsApp message stream.
 
 Reads the same fan-out socket the TUI reads, but only cares about `message`
-events. Exits on any disconnect; the wacli-notifier systemd unit restarts it.
+events: one from someone else raises the flag, one of mine clears it. Exits on
+any disconnect; the wacli-notifier systemd unit restarts it.
 """
 
 import json
@@ -18,18 +19,26 @@ RWORKSPACES_SOCKET = "/tmp/rlocal/rworkspaces/sock"
 ATTENTION_ID = "wacli"
 
 
-def send_attention():
+def rworkspaces_command(command):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(RWORKSPACES_SOCKET)
-        payload = json.dumps(
-            {
-                "id": ATTENTION_ID,
-                "command": ["toggle-window", "show", "wacli-tui"],
-                "dismiss_on_window_classes": ["wacli-tui", "elecwhat"],
-            }
-        )
-        sock.send(f"add_attention_by_cmd {payload}".encode())
+        sock.send(command.encode())
         sock.recv(256)
+
+
+def send_attention():
+    payload = json.dumps(
+        {
+            "id": ATTENTION_ID,
+            "command": ["toggle-window", "show", "wacli-tui"],
+            "dismiss_on_window_classes": ["wacli-tui", "elecwhat"],
+        }
+    )
+    rworkspaces_command(f"add_attention_by_cmd {payload}")
+
+
+def dismiss_attention():
+    rworkspaces_command(f"remove_attention_by_id {ATTENTION_ID}")
 
 
 def main():
@@ -58,9 +67,12 @@ def main():
                 event = json.loads(line)
                 event_type = event["type"]
                 if event_type == "message":
+                    # A message of mine means I am already in WhatsApp somewhere,
+                    # so the pending flag has been answered rather than raised.
                     if event["data"].get("is_from_me"):
-                        continue
-                    send_attention()
+                        dismiss_attention()
+                    else:
+                        send_attention()
                 elif event_type == "connection_state":
                     connected = event["data"]["connected"]
                     reason = event["data"].get("reason", "")
