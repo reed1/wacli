@@ -145,6 +145,8 @@ ssh sgtent jq -c 'select(.event=="*events.Message")' app/wacli/server/events/mon
 
 `message_fields` names the fields the payload actually set, which is how a mention arriving on a message type `getContextInfo` does not reach shows up as `context_info_found: false` next to a populated field list.
 
+[digging-the-event-log.md](digging-the-event-log.md) has the procedure for tracing one message back through it — deletions, the UTC/WIB offset that decides which day's file to open, and resolving a chat or sender name.
+
 ## Operations
 
 ```

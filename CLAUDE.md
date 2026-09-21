@@ -10,4 +10,7 @@ WhatsApp message watcher with terminal UI.
 - `wacli-send` - one-shot CLI that sends a single message to a chat JID, so scripts can fire a message without knowing the socket protocol
 - `wacli_socket.py` - server address and TCP keepalive settings, shared by the TUI and the notifier
 
-See [docs/architecture.md](docs/architecture.md) for the process/socket map, the socket protocol, and how disconnects are handled.
+## See also
+
+- [docs/architecture.md](docs/architecture.md) - the process/socket map, the socket protocol, and how disconnects are handled
+- [docs/digging-the-event-log.md](docs/digging-the-event-log.md) - tracing a message the server dropped or a deletion took away
