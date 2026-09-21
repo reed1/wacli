@@ -101,12 +101,70 @@ type Message struct {
 	IsDeleted     bool    `json:"is_deleted"`
 }
 
+// The inputs every filtering rule in handleMessage reads, and the call they
+// led to. Written for every message event, so a message that never reached the
+// TUI can be traced to the rule that dropped it without replaying the stream.
+type messageVerdict struct {
+	MessageID        string   `json:"message_id"`
+	Chat             string   `json:"chat"`
+	ChatName         string   `json:"chat_name"`
+	Sender           string   `json:"sender"`
+	SenderAlt        string   `json:"sender_alt"`
+	AddressingMode   string   `json:"addressing_mode"`
+	IsGroup          bool     `json:"is_group"`
+	IsFromMe         bool     `json:"is_from_me"`
+	MyJID            string   `json:"my_jid"`
+	MyLID            string   `json:"my_lid"`
+	MessageFields    []string `json:"message_fields"`
+	ContextInfoFound bool     `json:"context_info_found"`
+	MentionedJID     []string `json:"mentioned_jid"`
+	GroupMentions    []string `json:"group_mentions"`
+	Participant      string   `json:"participant"`
+	Mention          string   `json:"mention"`
+	IsMuted          bool     `json:"is_muted"`
+	IsArchived       bool     `json:"is_archived"`
+	IsReplyToMe      bool     `json:"is_reply_to_me"`
+	Text             string   `json:"text"`
+	Decision         string   `json:"decision"`
+}
+
+func (a *App) newVerdict(msg *events.Message) *messageVerdict {
+	v := &messageVerdict{
+		MessageID:      msg.Info.ID,
+		Chat:           msg.Info.Chat.String(),
+		Sender:         msg.Info.Sender.String(),
+		SenderAlt:      msg.Info.SenderAlt.String(),
+		AddressingMode: string(msg.Info.AddressingMode),
+		IsGroup:        msg.Info.IsGroup,
+		IsFromMe:       msg.Info.IsFromMe,
+		MessageFields:  populatedFields(msg.Message),
+	}
+	if myJID := a.client.Store.ID; myJID != nil {
+		v.MyJID = myJID.String()
+	}
+	v.MyLID = a.client.Store.LID.String()
+
+	if ctx := getContextInfo(msg.Message); ctx != nil {
+		v.ContextInfoFound = true
+		v.MentionedJID = ctx.GetMentionedJID()
+		v.Participant = ctx.GetParticipant()
+		for _, gm := range ctx.GetGroupMentions() {
+			v.GroupMentions = append(v.GroupMentions, gm.GetGroupJID())
+		}
+	}
+	return v
+}
+
 func (a *App) handleMessage(msg *events.Message) {
 	vlogf("handleMessage id=%s chat=%s sender=%s pushname=%q isGroup=%v isFromMe=%v isEdit=%v isEphemeral=%v isViewOnce=%v retry=%d",
 		msg.Info.ID, msg.Info.Chat.String(), msg.Info.Sender.String(), msg.Info.PushName,
 		msg.Info.IsGroup, msg.Info.IsFromMe, msg.IsEdit, msg.IsEphemeral, msg.IsViewOnce, msg.RetryCount)
 	vlogf("  message payload: %s", protoDump(msg.Message))
 	vlogf("  raw payload:     %s", protoDump(msg.RawMessage))
+
+	verdict := a.newVerdict(msg)
+	defer func() { a.eventLog.verdict(verdict) }()
+
 	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil {
 		vlogf("  protocolMessage type=%v key=%s", protoMsg.GetType(), protoDump(protoMsg.GetKey()))
 		if edited := protoMsg.GetEditedMessage(); edited != nil {
@@ -115,16 +173,20 @@ func (a *App) handleMessage(msg *events.Message) {
 		switch protoMsg.GetType() {
 		case waE2E.ProtocolMessage_MESSAGE_EDIT:
 			a.handleEdit(msg, protoMsg)
+			verdict.Decision = "edit applied"
 		case waE2E.ProtocolMessage_REVOKE:
 			a.handleRevoke(msg, protoMsg)
+			verdict.Decision = "revoke applied"
 		default:
 			vlogf("  protocolMessage type %v not handled; skipping save", protoMsg.GetType())
+			verdict.Decision = fmt.Sprintf("dropped: unhandled protocolMessage type %v", protoMsg.GetType())
 		}
 		return
 	}
 
 	if isSenderKeyDistribution(msg.Message) {
 		vlogf("  dropped: sender key distribution copy of %s", msg.Info.ID)
+		verdict.Decision = "dropped: sender key distribution copy"
 		return
 	}
 
@@ -132,6 +194,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	if chatJID.Server == "broadcast" && !a.config.IncludeStatusMessages {
 		vlogf("  dropped: broadcast/status message")
+		verdict.Decision = "dropped: broadcast/status message"
 		return
 	}
 
@@ -141,18 +204,26 @@ func (a *App) handleMessage(msg *events.Message) {
 	mention := a.mentionOf(msg)
 	isReplyToMe := a.isReplyToMe(msg)
 
+	verdict.IsMuted = isMuted
+	verdict.IsArchived = isArchived
+	verdict.Mention = mention
+	verdict.IsReplyToMe = isReplyToMe
+
 	if isMuted && mention == mentionNone && !isReplyToMe && !isFromMe && !a.config.IncludeMutedMessages {
 		vlogf("  dropped: muted chat, not mentioned/reply-to-me")
+		verdict.Decision = "dropped: muted chat, not mentioned/reply-to-me"
 		return
 	}
 
 	if isArchived && mention == mentionNone && !isReplyToMe && !isFromMe {
 		vlogf("  dropped: archived chat, not mentioned/reply-to-me")
+		verdict.Decision = "dropped: archived chat, not mentioned/reply-to-me"
 		return
 	}
 
 	msgType, text := extractMessage(msg.Message)
 	text = a.resolveMentions(text, msg.Message)
+	verdict.Text = text
 
 	var mediaFile *string
 	if img := msg.Message.GetImageMessage(); img != nil {
@@ -173,6 +244,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	senderName := a.getSenderName(msg)
 	chatName := a.getChatName(msg)
+	verdict.ChatName = chatName
 
 	message := &Message{
 		MessageID:   msg.Info.ID,
@@ -197,6 +269,7 @@ func (a *App) handleMessage(msg *events.Message) {
 	}
 
 	a.broadcastMessage(message)
+	verdict.Decision = "stored"
 
 	// Started after the insert: the transcription lands seconds later and updates
 	// this row by message_id, which has to exist by then.

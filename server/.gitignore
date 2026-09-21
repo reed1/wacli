@@ -6,3 +6,4 @@ wacli
 /transcribe.sh
 /media/*
 !/media/.gitkeep
+/events/

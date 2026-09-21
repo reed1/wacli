@@ -349,3 +349,71 @@ func TestSendEntriesTrimsStaleCalls(t *testing.T) {
 		}
 	}
 }
+
+// The verdict record is the whole point of the event log: a message the TUI
+// never showed has to name the rule that dropped it and the inputs that rule read.
+func TestHandleMessageLogsVerdictForDroppedMessage(t *testing.T) {
+	a := newTestApp(t)
+	records := a.attachEventLog(t)
+
+	chat := types.JID{User: "111", Server: types.DefaultUserServer}
+	a.chatSettings.settings[chat] = types.LocalChatSettings{Found: true, MutedUntil: store.MutedForever}
+
+	evt := incomingText("muted1", "111", "hey @999")
+	evt.Message = textWithMentions("hey @999", "999@lid")
+	a.handleMessage(evt)
+
+	lines := records()
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 verdict record, got %v", lines)
+	}
+
+	var rec struct {
+		Kind string          `json:"kind"`
+		Data *messageVerdict `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
+		t.Fatalf("unmarshal record: %v", err)
+	}
+	if rec.Kind != "verdict" {
+		t.Fatalf("kind = %q, want verdict", rec.Kind)
+	}
+	v := rec.Data
+	if v.Decision != "dropped: muted chat, not mentioned/reply-to-me" {
+		t.Errorf("decision = %q", v.Decision)
+	}
+	if !v.IsMuted || v.Mention != mentionNone {
+		t.Errorf("mute/mention inputs = %+v", v)
+	}
+	if !v.ContextInfoFound || len(v.MentionedJID) != 1 || v.MentionedJID[0] != "999@lid" {
+		t.Errorf("mentioned JIDs = %+v", v.MentionedJID)
+	}
+	if v.MyJID != a.myJID.String() || v.MyLID != a.myLID.String() {
+		t.Errorf("identity = %q / %q", v.MyJID, v.MyLID)
+	}
+}
+
+func TestHandleMessageLogsStoredVerdict(t *testing.T) {
+	a := newTestApp(t)
+	records := a.attachEventLog(t)
+
+	a.handleMessage(incomingText("msg1", "111", "hello there"))
+
+	lines := records()
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 verdict record, got %v", lines)
+	}
+
+	var rec struct {
+		Data *messageVerdict `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
+		t.Fatalf("unmarshal record: %v", err)
+	}
+	if rec.Data.Decision != "stored" {
+		t.Errorf("decision = %q, want stored", rec.Data.Decision)
+	}
+	if rec.Data.Text != "hello there" || rec.Data.ChatName != "111" {
+		t.Errorf("verdict = %+v", rec.Data)
+	}
+}

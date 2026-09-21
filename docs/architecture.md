@@ -112,6 +112,7 @@ Everything lives in the server's working directory, `/home/reed/app/wacli/server
 
 - `wacli.db` — whatsmeow's device/session store. Deleting it means re-pairing. Also opened read-only to answer "is this chat muted?"
 - `messages.db` — `messages` and `calls`. Both are capped at a maximum entry count and trimmed back down once they pass it (`maxEntries`/`trimToCount` in `server/main.go`), so this is a rolling window, not an archive.
+- `events/` — the event log (below)
 - `media/` — images and video, named by content hash and extension. Files belonging to trimmed messages are deleted with them. The TUI never reads this directory; it asks for `get_media` and writes chunks into `/tmp/rlocal/wacli/`, via a `.part` file renamed on completion. Server filenames are stable UUIDs, so `fetch_media` treats an existing local file as a finished download and skips the transfer.
 
 ## Yanking an image
@@ -120,6 +121,29 @@ Everything lives in the server's working directory, `/home/reed/app/wacli/server
 
 `copyq` rather than `xclip` because only it can advertise several targets in one call, and because it marks its own copies with `application/x-copyq-owner` and keeps them out of the history — so the yank stores nothing. Video is deliberately excluded: `mpv` already plays it and no paste target wants a video file URI.
 - voice notes — `$TMPDIR/wacli-voice`, not configurable: they are scratch files, deleted after 5 days. `TRANSCRIPTION_SCRIPT` transcribes them — only in one-to-one chats, never in groups — and the text is written back onto the message row, which then goes out as `message_updated`.
+
+## The event log
+
+Every event whatsmeow hands `handleEvent` is appended, verbatim, to `events/<day>.jsonl` in the server's working directory — one JSON object per line, before any filtering. Seven filenames cycle (`mon.jsonl` … `sun.jsonl`) and the first write of a day truncates the file it lands in, so the log carries the past week and stops there. Which day an existing file belongs to is read from its mtime, not remembered in the process, so a restart part-way through a day appends rather than wiping what is already recorded.
+
+Two kinds of record share the stream:
+
+| `kind` | `event` | `data` |
+|---|---|---|
+| `event` | the Go type, e.g. `*events.Message` | the event as whatsmeow delivered it |
+| `verdict` | — | what `handleMessage` made of a message event |
+
+A payload `encoding/json` cannot encode lands anyway, with `marshal_error` and a `%+v` `dump` in place of `data`.
+
+The verdict is the diagnostic half. One is written for every message event, whatever became of it, and it holds the inputs each filtering rule reads — `my_jid`/`my_lid`, `addressing_mode`, `context_info_found`, `mentioned_jid`, `group_mentions`, `participant`, `is_muted`, `is_archived` — beside the `decision` they produced (`stored`, `edit applied`, or the reason it was dropped). So a message that never reached the TUI names the rule that dropped it and the values that rule saw, without replaying the stream.
+
+```
+ssh sgtent jq -c 'select(.kind=="verdict")' app/wacli/server/events/mon.jsonl
+ssh sgtent jq -c 'select(.kind=="verdict" and .data.decision!="stored")' app/wacli/server/events/mon.jsonl
+ssh sgtent jq -c 'select(.event=="*events.Message")' app/wacli/server/events/mon.jsonl
+```
+
+`message_fields` names the fields the payload actually set, which is how a mention arriving on a message type `getContextInfo` does not reach shows up as `context_info_found: false` next to a populated field list.
 
 ## Operations
 
@@ -131,6 +155,7 @@ wacli-send <chat_jid> 'text'               # send one message; "-" reads stdin
 ssh sgtent journalctl --user -u wacli-server -f
 journalctl --user -u wacli-notifier -f
 tail -f /tmp/rlocal/wacli/wacli.log        # TUI event log
+ssh sgtent tail -f app/wacli/server/events/$(date +%a | tr A-Z a-z).jsonl   # server event log
 ```
 
 The prod playbook ends by running `wait_for_wa_connected.py` against `LISTEN_ADDR`, so a deploy fails loudly if the server comes back up without a working WhatsApp link. `wacli-server.service` sets `RestartPreventExitStatus=2`, which is the exit code the server uses for a permanent WhatsApp failure — the kind that needs re-pairing rather than a restart.

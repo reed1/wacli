@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,4 +143,15 @@ func countMessages(t *testing.T, a *testApp) int {
 		t.Fatalf("count messages: %v", err)
 	}
 	return count
+}
+
+// attachEventLog points the app at a throwaway event log and returns a reader
+// for the records it writes on this day's file.
+func (a *testApp) attachEventLog(t *testing.T) func() []string {
+	t.Helper()
+	log := newTestEventLog(t)
+	a.eventLog = log
+	return func() []string {
+		return readLog(t, log, strings.ToLower(time.Now().Format("Mon"))+".jsonl")
+	}
 }

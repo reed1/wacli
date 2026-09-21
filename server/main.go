@@ -52,6 +52,7 @@ const (
 	trimToCount              = 1500
 	entriesLimit             = 50
 	permanentFailureExitCode = 2
+	eventLogDir              = "events"
 	// Upper bound for a single newline-delimited socket command. Large enough
 	// to carry a base64-encoded image sent from the TUI.
 	maxSocketLine = 32 * 1024 * 1024
@@ -69,6 +70,7 @@ type App struct {
 	ctx         context.Context
 	msgDB       *sql.DB
 	waDB        *sql.DB
+	eventLog    *EventLog
 	config      Config
 	socketConns map[net.Conn]*connState
 	connMu      sync.RWMutex
@@ -152,6 +154,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	eventLog, err := newEventLog(eventLogDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open event log: %v\n", err)
+		os.Exit(1)
+	}
+	defer eventLog.Close()
+
 	clientLog := waLog.Stdout("Client", waLogLevel, true)
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 	client.EnableAutoReconnect = true
@@ -161,6 +170,7 @@ func main() {
 		ctx:         ctx,
 		msgDB:       msgDB,
 		waDB:        waDB,
+		eventLog:    eventLog,
 		config:      config,
 		socketConns: make(map[net.Conn]*connState),
 	}
@@ -707,6 +717,7 @@ func (a *App) loginWithQR() error {
 
 func (a *App) handleEvent(evt interface{}) {
 	vlogf("event %s: %+v", reflect.TypeOf(evt).String(), evt)
+	a.eventLog.event(evt)
 
 	if pd, ok := evt.(events.PermanentDisconnect); ok {
 		eventType := reflect.TypeOf(evt).String()
