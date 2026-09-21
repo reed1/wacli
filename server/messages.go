@@ -200,7 +200,7 @@ func (a *App) handleMessage(msg *events.Message) {
 
 	// Started after the insert: the transcription lands seconds later and updates
 	// this row by message_id, which has to exist by then.
-	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() {
+	if audio := msg.Message.GetAudioMessage(); audio != nil && audio.GetPTT() && !msg.Info.IsGroup {
 		go a.handleVoiceMessage(msg, audio)
 	}
 }

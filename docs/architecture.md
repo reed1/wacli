@@ -119,7 +119,7 @@ Everything lives in the server's working directory, `/home/reed/app/wacli/server
 `y` on an image message copies the image; on anything else it copies text. The clipboard gets a **pointer, not the pixels**: X11 selections carry whatever the owner offers, and a clipboard manager pulls every advertised target the moment ownership changes, so offering `image/png` would push megabytes into CopyQ's on-disk history for every yank. Instead `copy_image` shells out to `copyq copy text/uri-list file:///tmp/rlocal/wacli/<uuid>.jpg text/plain <caption or path>`.
 
 `copyq` rather than `xclip` because only it can advertise several targets in one call, and because it marks its own copies with `application/x-copyq-owner` and keeps them out of the history — so the yank stores nothing. Video is deliberately excluded: `mpv` already plays it and no paste target wants a video file URI.
-- voice notes — `$TMPDIR/wacli-voice`, not configurable: they are scratch files, deleted after 5 days. `TRANSCRIPTION_SCRIPT` transcribes them and the text is written back onto the message row, which then goes out as `message_updated`.
+- voice notes — `$TMPDIR/wacli-voice`, not configurable: they are scratch files, deleted after 5 days. `TRANSCRIPTION_SCRIPT` transcribes them — only in one-to-one chats, never in groups — and the text is written back onto the message row, which then goes out as `message_updated`.
 
 ## Operations
 
