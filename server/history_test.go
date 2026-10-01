@@ -229,4 +229,7 @@ func TestSendChangesWritesOneChangesEvent(t *testing.T) {
 	if len(event.Data.Changes) != 1 || event.Data.Changes[0].MessageID != "m1" {
 		t.Errorf("changes event = %+v", event.Data)
 	}
+	if event.Data.Changes[0].Edits == nil {
+		t.Error("edits must be sent as an empty list, not null")
+	}
 }

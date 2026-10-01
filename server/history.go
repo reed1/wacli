@@ -243,7 +243,7 @@ func earliestChange(c Change) int64 {
 }
 
 func (a *App) buildChange(id string, cl *changeLog, chatNames map[types.JID]string) (Change, error) {
-	change := Change{MessageID: id, Decision: cl.decisions[id]}
+	change := Change{MessageID: id, Decision: cl.decisions[id], Edits: []Edit{}}
 
 	if original, ok := cl.originals[id]; ok {
 		change.Source = "log"
