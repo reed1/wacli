@@ -19,8 +19,8 @@ from textual.notifications import Notification, Notify
 from textual.widgets import Footer, Header
 
 from tui.models import Call, Entry, Message
-from tui.utils import RUNTIME_DIR, log, log_submitted_message
-from wacli_socket import SERVER_ADDR, enable_keepalive
+from tui.utils import EXIT_DISCONNECTED, RUNTIME_DIR, log, log_submitted_message
+from shared.connection import SERVER_ADDR, enable_keepalive
 
 CLIPBOARD_IMAGE_PATH = RUNTIME_DIR / "clipboard_send.png"
 VIM_VIEW_PATH = RUNTIME_DIR / "message.txt"
@@ -46,9 +46,6 @@ SOCKET_READ_LIMIT = 1024 * 1024
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTS = {".mp4", ".3gp", ".mov", ".webm", ".mkv"}
 CLIPBOARD_TIMEOUT = 5
-
-# Tells the wacli-tui wrapper to offer a restart rather than treat this as a crash.
-EXIT_DISCONNECTED = 75
 
 REMOVE_REACTION_ID = "🚫"
 REACTION_EMOJIS = json.loads((Path(__file__).parent / "reaction_emojis.json").read_text())
@@ -337,7 +334,7 @@ class WaCLIApp(App):
 
     async def listen_socket(self) -> None:
         # The socket is the only source of entries, so once it is gone the view is a
-        # stale snapshot. Quit and let the wacli-tui wrapper offer a restart.
+        # stale snapshot. Quit and let `wacli tui` offer a restart.
         try:
             await self.stream_events()
         except OSError as error:

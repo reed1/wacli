@@ -15,7 +15,7 @@ Three processes on two machines, joined by one TCP socket.
       this machine  ┌───────────────────┬─┴───────────────────┐
                     │                   │                     │
              ┌──────┴───────┐   ┌───────┴────────┐   ┌────────┴─────────┐
-             │  wacli-tui   │   │ wacli-notifier │   │ (ansible deploy  │
+             │  wacli tui   │   │ wacli-notifier │   │ (ansible deploy  │
              │  (Textual)   │   │ systemd --user │   │  health check)   │
              └──────┬───────┘   └───────┬────────┘   └──────────────────┘
                     │                   │ AF_UNIX
@@ -29,8 +29,8 @@ xclip / copyq       ▼          /tmp/rlocal/rworkspaces/sock
 |---|---|---|---|
 | `wacli-server` | `sgtent:/home/reed/app/wacli/server` | `wacli-server.service` (systemd user, lingering enabled) | WhatsApp via whatsmeow; listens on `LISTEN_ADDR` |
 | `wacli-notifier` | this machine, `notifier/main.py` | `wacli-notifier.service` (systemd user) | server socket; rworkspaces Unix socket |
-| `wacli-tui` | this machine, `tui/main.py` | you, in a kitty window via the `wacli-tui` wrapper | server socket; kitty/rofi/xclip/copyq/mpv/xdg-open |
-| `wacli-send` | this machine, repo root | any script wanting to send one message | server socket, for one request/response |
+| `wacli tui` | this machine, `tui/main.py` | you, in a kitty window of class `wacli-tui` | server socket; kitty/rofi/xclip/copyq/mpv/xdg-open |
+| `wacli send` | this machine, `commands/send.py` | any script wanting to send one message | server socket, for one request/response |
 
 `scripts/print-sgtent-qr.py` SSHes to sgtent to re-pair WhatsApp. `ansible/playbooks/04b_deploy_prod/files/wait_for_wa_connected.py` is copied to the prod host at deploy time and opens the same socket just long enough to see one `connection_state` — it takes `host:port` on argv and deliberately shares no code with the clients here.
 
@@ -38,7 +38,7 @@ xclip / copyq       ▼          /tmp/rlocal/rworkspaces/sock
 
 | From | To | Type | Address |
 |---|---|---|---|
-| TUI, notifier, `wacli-send`, deploy check | server | TCP | `SERVER_HOST:SERVER_PORT` (`.env`) = `LISTEN_ADDR` on the server |
+| TUI, notifier, `wacli send`, deploy check | server | TCP | `SERVER_HOST:SERVER_PORT` (`.env`) = `LISTEN_ADDR` on the server |
 | notifier | rworkspaces | AF_UNIX | `/tmp/rlocal/rworkspaces/sock` |
 | TUI | kitty | kitty remote control | `kitty @ launch`, for the Vim overlay |
 
@@ -87,9 +87,9 @@ Filtering happens once, server-side, before the row is inserted and broadcast (`
 | Events consumed | all of them | `message` (skipping `is_from_me`) and `connection_state` |
 | Sends commands | yes, all six | never — read-only |
 | On disconnect | exits `75` | exits `1` |
-| Restarted by | the `wacli-tui` wrapper loop, after a keypress | systemd, after 10s |
+| Restarted by | `wacli tui`, after a keypress | systemd, after 10s |
 
-Both import `SERVER_ADDR` and `enable_keepalive` from `wacli_socket.py` at the repo root. `wacli-send` takes only `SERVER_ADDR`: it opens a connection, sends one command, waits for the ack under a timeout and exits, so it is never idle long enough for keepalive to have anything to say. That module exists because the two clients must agree on where the server is and how aggressively to probe a quiet connection; when they disagreed, one of them silently went stale (below). The notifier reaches it with a `sys.path` insert, the same trick `tui/main.py` already uses.
+Both import `SERVER_ADDR` and `enable_keepalive` from `shared/connection.py`. `wacli send` takes only `SERVER_ADDR`: it opens a connection, sends one command, waits for the ack under a timeout and exits, so it is never idle long enough for keepalive to have anything to say. That module exists because the two clients must agree on where the server is and how aggressively to probe a quiet connection; when they disagreed, one of them silently went stale (below). The notifier and `tui/main.py` are each started directly, so each puts the repo root on `sys.path` to reach it.
 
 ## Disconnect handling
 
@@ -100,7 +100,7 @@ A TCP connection whose peer disappears without sending a FIN — server restart,
 Recovery is per-client, and deliberately different:
 
 - **notifier** — exits 1, systemd restarts it 10s later, and it reconnects. Self-healing, no interaction.
-- **TUI** — exits `EXIT_DISCONNECTED` (75). The `wacli-tui` wrapper loop treats only that code as "offer a restart", prints `Press any key to reconnect...`, and re-runs. Any other exit code falls through to `pause-if-error`, which holds the window open so the failure can be read. Restarting re-runs `get_entries`, so messages missed while the socket was dead come back.
+- **TUI** — exits `EXIT_DISCONNECTED` (75). `wacli tui` runs the TUI as a child process and treats only that code as "offer a restart", prints `Press any key to reconnect...`, and re-runs. Any other exit code falls through to `pause-if-error`, which holds the window open so the failure can be read. Restarting re-runs `get_entries`, so messages missed while the socket was dead come back.
 
 The TUI does not reconnect in place. Its whole view is built from one `get_entries` snapshot plus the live stream, so a reconnect would have to reconcile the two; a restart gets the same result for free.
 
@@ -153,7 +153,7 @@ ssh sgtent jq -c 'select(.event=="*events.Message")' app/wacli/server/events/mon
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04b_deploy_prod/main.yaml --tags push-server
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04c_deploy_local/main.yaml --tags push-notifier
 python scripts/print-sgtent-qr.py          # re-pair WhatsApp
-wacli-send <chat_jid> 'text'               # send one message; "-" reads stdin
+wacli send <chat_jid> 'text'               # send one message; "-" reads stdin
 ssh sgtent journalctl --user -u wacli-server -f
 journalctl --user -u wacli-notifier -f
 tail -f /tmp/rlocal/wacli/wacli.log        # TUI event log

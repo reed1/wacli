@@ -8,6 +8,9 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 APP_LOG_FILE = RUNTIME_DIR / "wacli.log"
 SUBMIT_LOG_FILE = RUNTIME_DIR / "submitted.jsonl"
 
+# Tells `wacli tui` to offer a restart rather than treat this as a crash.
+EXIT_DISCONNECTED = 75
+
 
 def log(msg: str) -> None:
     with open(APP_LOG_FILE, "a") as f:

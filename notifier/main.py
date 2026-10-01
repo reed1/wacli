@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from wacli_socket import SERVER_ADDR, enable_keepalive
+from shared.connection import SERVER_ADDR, enable_keepalive
 
 RWORKSPACES_SOCKET = "/tmp/rlocal/rworkspaces/sock"
 ATTENTION_ID = "wacli"

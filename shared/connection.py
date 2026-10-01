@@ -1,8 +1,9 @@
-"""How the TUI and the notifier reach the wacli server.
+"""How every client reaches the wacli server.
 
-Both are long-lived readers of the same fan-out socket, so both need the same
-address and the same keepalive settings. Keeping that here is what stops one
-client from silently outliving a connection the other already noticed was dead.
+The TUI and the notifier are long-lived readers of the same fan-out socket, so
+both need the same address and the same keepalive settings. Keeping that here is
+what stops one client from silently outliving a connection the other already
+noticed was dead.
 """
 
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 SERVER_ADDR = (os.environ["SERVER_HOST"], int(os.environ["SERVER_PORT"]))
 
