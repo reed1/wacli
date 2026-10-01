@@ -37,7 +37,7 @@ def wait_for_key() -> None:
 def run(args) -> int:
     command = [sys.executable, str(TUI_MAIN)] + (["--verbose"] if args.verbose else [])
     while True:
-        code = subprocess.run(command).returncode
+        code = subprocess.run(command, check=False).returncode
         if code != EXIT_DISCONNECTED:
             return code
         wait_for_key()

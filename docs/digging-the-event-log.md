@@ -4,7 +4,9 @@ The event log is the only record of a message the server dropped. What it keeps 
 how it rotates is in [architecture.md](architecture.md#the-event-log); this is the
 procedure for answering "what was that message I never saw?" against it.
 
-Everything runs over ssh, against `sgtent:app/wacli/server/events/`.
+For an edit or a deletion, `wacli changes <window>` answers it directly: who, in which chat, the text before and after, and whether the TUI ever had it. What follows is for everything else — a message that was dropped without being changed, or a question about the raw payload.
+
+Everything below runs over ssh, against `sgtent:app/wacli/server/events/`.
 
 ## Which file the question is in
 

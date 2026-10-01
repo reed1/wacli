@@ -5,13 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from commands import send, tui
+from commands import changes, send, tui
 
 
 def main() -> int | None:
     parser = argparse.ArgumentParser(prog="wacli", description="WhatsApp through the wacli server.")
     subparsers = parser.add_subparsers(required=True, metavar="command")
-    for command in (tui, send):
+    for command in (tui, send, changes):
         command.add_parser(subparsers)
 
     args = parser.parse_args()

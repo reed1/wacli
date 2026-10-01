@@ -111,6 +111,31 @@ func (e *EventLog) fileFor(now time.Time) (*os.File, error) {
 	return file, nil
 }
 
+// The whole log as it stands, one byte slice per file. Read under the write
+// lock so no file is caught half-way through a line; parsing happens after the
+// lock is released.
+func (e *EventLog) snapshot() ([][]byte, error) {
+	if e == nil {
+		return nil, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	paths, err := filepath.Glob(filepath.Join(e.dir, "*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	files := make([][]byte, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, data)
+	}
+	return files, nil
+}
+
 func (e *EventLog) Close() error {
 	if e == nil {
 		return nil

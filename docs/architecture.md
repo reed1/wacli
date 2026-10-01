@@ -31,6 +31,7 @@ xclip / copyq       ▼          /tmp/rlocal/rworkspaces/sock
 | `wacli-notifier` | this machine, `notifier/main.py` | `wacli-notifier.service` (systemd user) | server socket; rworkspaces Unix socket |
 | `wacli tui` | this machine, `tui/main.py` | you, in a kitty window of class `wacli-tui` | server socket; kitty/rofi/xclip/copyq/mpv/xdg-open |
 | `wacli send` | this machine, `commands/send.py` | any script wanting to send one message | server socket, for one request/response |
+| `wacli changes` | this machine, `commands/changes.py` | you, to see what was edited or deleted lately | server socket, for one request/response; `$PAGER` |
 
 `scripts/print-sgtent-qr.py` SSHes to sgtent to re-pair WhatsApp. `ansible/playbooks/04b_deploy_prod/files/wait_for_wa_connected.py` is copied to the prod host at deploy time and opens the same socket just long enough to see one `connection_state` — it takes `host:port` on argv and deliberately shares no code with the clients here.
 
@@ -59,19 +60,21 @@ Newline-delimited JSON in both directions on one long-lived connection. Inbound 
 | `call` | `data: Call` | incoming call offer |
 | `response` | `request_id, success, error?` (flat) | ack for `send`/`reply`/`react`/`send_image` |
 | `media` | `request_id, seq, data, done, error?` (flat) | 256 KiB base64 chunks answering `get_media` |
+| `changes` | `data: {log_starts, changes: [Change], error?}` | reply to `get_changes` — oldest change first |
 
-**Client → server.** Every action but `get_entries` carries a `request_id` that comes back on the matching `response`.
+**Client → server.** Every action but `get_entries` and `get_changes` carries a `request_id` that comes back on the matching `response`.
 
 | `action` | Fields |
 |---|---|
 | `get_entries` | — |
+| `get_changes` | `since` (unix seconds) |
 | `get_media` | `request_id`, `filename` |
 | `send` | `request_id`, `chat_jid`, `text` |
 | `reply` | `request_id`, `chat_jid`, `message_id`, `sender_jid`, `text` |
 | `react` | `request_id`, `chat_jid`, `message_id`, `sender_jid`, `text` (empty removes the reaction) |
 | `send_image` | `request_id`, `chat_jid`, `image_data` (base64 PNG) |
 
-**Fan-out.** `entries`, `response` and `media` go only to the connection that asked. `message`, `message_updated`, `call` and `connection_state` are broadcast to every entry in `socketConns`. So the TUI and the notifier receive byte-identical event streams — there is no per-client subscription or filtering.
+**Fan-out.** `entries`, `changes`, `response` and `media` go only to the connection that asked. `message`, `message_updated`, `call` and `connection_state` are broadcast to every entry in `socketConns`. So the TUI and the notifier receive byte-identical event streams — there is no per-client subscription or filtering.
 
 Filtering happens once, server-side, before the row is inserted and broadcast (`server/messages.go`):
 
@@ -145,6 +148,8 @@ ssh sgtent jq -c 'select(.event=="*events.Message")' app/wacli/server/events/mon
 
 `message_fields` names the fields the payload actually set, which is how a mention arriving on a message type `getContextInfo` does not reach shows up as `context_info_found: false` next to a populated field list.
 
+`get_changes` reads the same log to answer "what was edited or deleted since then?". It reads every file on each request — the log is a few tens of MB — and joins each edit and revoke to the message it targets. Payloads go back through protojson rather than `encoding/json`, because a protobuf oneof is written as a nested Go field name that `encoding/json` cannot read back. The original's text comes from the log when it is there, from `messages.db` when it predates the log (`source: store`), and is `missing` when neither has it; status deletions are left out. `log_starts` is the oldest record, so `wacli changes` can say when the window reaches further back than the log does — which a `7d` window always will, by up to a day, since the first write of a day empties that day's file from a week ago.
+
 [digging-the-event-log.md](digging-the-event-log.md) has the procedure for tracing one message back through it — deletions, the UTC/WIB offset that decides which day's file to open, and resolving a chat or sender name.
 
 ## Operations
@@ -154,6 +159,7 @@ ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04b_deploy_prod/mai
 ansible-playbook -i ansible/inventory.yaml ansible/playbooks/04c_deploy_local/main.yaml --tags push-notifier
 python scripts/print-sgtent-qr.py          # re-pair WhatsApp
 wacli send <chat_jid> 'text'               # send one message; "-" reads stdin
+wacli changes 5h                           # edits and deletions in the last 5h, at most 7d
 ssh sgtent journalctl --user -u wacli-server -f
 journalctl --user -u wacli-notifier -f
 tail -f /tmp/rlocal/wacli/wacli.log        # TUI event log

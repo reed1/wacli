@@ -329,6 +329,7 @@ type SocketCommand struct {
 	Text      string `json:"text"`
 	Filename  string `json:"filename"`
 	ImageData string `json:"image_data"`
+	Since     int64  `json:"since"`
 }
 
 type SocketResponse struct {
@@ -396,6 +397,10 @@ func (a *App) handleSocketConn(conn net.Conn) {
 			}
 		case "get_media":
 			a.sendMedia(state, cmd.RequestID, cmd.Filename)
+		case "get_changes":
+			if err := a.sendChanges(state, cmd.Since); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to send changes: %v\n", err)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown socket command: %s\n", cmd.Action)
 		}
