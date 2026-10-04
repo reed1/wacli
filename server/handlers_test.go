@@ -73,6 +73,46 @@ func TestHandleMessageSavesAndBroadcasts(t *testing.T) {
 	}
 }
 
+func TestHandleMessageDropsDuplicateDelivery(t *testing.T) {
+	a := newTestApp(t)
+	_, lines := a.attachConn(t)
+	records := a.attachEventLog(t)
+
+	a.handleMessage(incomingText("msg1", "111", "hello there"))
+	recvLine(t, lines)
+	a.handleMessage(incomingText("msg1", "111", "hello there"))
+
+	expectNoLine(t, lines)
+	if got := countMessages(t, a); got != 1 {
+		t.Errorf("message count = %d, want 1", got)
+	}
+
+	logged := records()
+	if len(logged) != 2 {
+		t.Fatalf("expected 2 verdict records, got %v", logged)
+	}
+	var rec struct {
+		Data *messageVerdict `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(logged[1]), &rec); err != nil {
+		t.Fatalf("unmarshal record: %v", err)
+	}
+	if rec.Data.Decision != "dropped: duplicate delivery" {
+		t.Errorf("decision = %q, want dropped: duplicate delivery", rec.Data.Decision)
+	}
+}
+
+func TestHandleMessageKeepsSameIDInAnotherChat(t *testing.T) {
+	a := newTestApp(t)
+
+	a.handleMessage(incomingText("msg1", "111", "hello there"))
+	a.handleMessage(incomingText("msg1", "222", "hello there"))
+
+	if got := countMessages(t, a); got != 2 {
+		t.Errorf("message count = %d, want 2", got)
+	}
+}
+
 func TestHandleMessageDropsMutedChat(t *testing.T) {
 	a := newTestApp(t)
 	_, lines := a.attachConn(t)

@@ -198,6 +198,13 @@ func (a *App) handleMessage(msg *events.Message) {
 		return
 	}
 
+	// WhatsApp sometimes delivers the same message twice, seconds apart.
+	if a.isStored(chatJID, msg.Info.ID) {
+		vlogf("  dropped: %s already stored", msg.Info.ID)
+		verdict.Decision = "dropped: duplicate delivery"
+		return
+	}
+
 	isFromMe := msg.Info.IsFromMe
 	isMuted := a.isMuted(chatJID)
 	isArchived := a.isArchived(chatJID)
@@ -328,6 +335,19 @@ func (a *App) handleRevoke(msg *events.Message, protoMsg *waE2E.ProtocolMessage)
 		return
 	}
 	a.broadcastMessageUpdate(targetID)
+}
+
+func (a *App) isStored(chatJID types.JID, messageID string) bool {
+	var exists bool
+	err := a.msgDB.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM messages WHERE chat_jid = ? AND message_id = ?)`,
+		chatJID.String(), messageID,
+	).Scan(&exists)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to check for stored message %s: %v\n", messageID, err)
+		os.Exit(1)
+	}
+	return exists
 }
 
 func (a *App) saveMessage(msg *Message) error {

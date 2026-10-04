@@ -276,6 +276,8 @@ func initMessageDB(dsn string) (*sql.DB, error) {
 			is_deleted INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_chat_message_id
+			ON messages(chat_jid, message_id) WHERE message_id != '';
 
 		CREATE TABLE IF NOT EXISTS calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

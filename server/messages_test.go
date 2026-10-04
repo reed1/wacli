@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -214,7 +215,7 @@ func TestSaveMessageTrimsOldEntries(t *testing.T) {
 
 	for i := 0; i <= maxEntries; i++ {
 		msg := &Message{
-			MessageID: "msg-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i%10)),
+			MessageID: fmt.Sprintf("msg-%d", i),
 			Timestamp: int64(1000 + i),
 			ChatJID:   "1@s.whatsapp.net",
 			ChatName:  "Chat",
