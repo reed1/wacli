@@ -20,7 +20,7 @@ Three processes on two machines, joined by one TCP socket.
              └──────┬───────┘   └───────┬────────┘   └──────────────────┘
                     │                   │ AF_UNIX
 kitty / rofi / mpv  │                   ▼
-xclip / copyq       ▼          /tmp/rlocal/rworkspaces/sock
+xclip       ▼          /tmp/rlocal/rworkspaces/sock
 ```
 
 ## Who is who
@@ -29,7 +29,7 @@ xclip / copyq       ▼          /tmp/rlocal/rworkspaces/sock
 |---|---|---|---|
 | `wacli-server` | `sgtent:/home/reed/app/wacli/server` | `wacli-server.service` (systemd user, lingering enabled) | WhatsApp via whatsmeow; listens on `LISTEN_ADDR` |
 | `wacli-notifier` | this machine, `notifier/main.py` | `wacli-notifier.service` (systemd user) | server socket; rworkspaces Unix socket |
-| `wacli tui` | this machine, `tui/main.py` | you, in a kitty window of class `wacli-tui` | server socket; kitty/rofi/xclip/copyq/mpv/xdg-open |
+| `wacli tui` | this machine, `tui/main.py` | you, in a kitty window of class `wacli-tui` | server socket; kitty/rofi/xclip/mpv/xdg-open |
 | `wacli send` | this machine, `commands/send.py` | any script wanting to send one message | server socket, for one request/response |
 | `wacli changes` | this machine, `commands/changes.py` | you, to see what was edited or deleted lately | server socket, for one request/response; `$PAGER` |
 
@@ -120,9 +120,8 @@ Everything lives in the server's working directory, `/home/reed/app/wacli/server
 
 ## Yanking an image
 
-`y` on an image message copies the image; on anything else it copies text. The clipboard gets a **pointer, not the pixels**: X11 selections carry whatever the owner offers, and a clipboard manager pulls every advertised target the moment ownership changes, so offering `image/png` would push megabytes into CopyQ's on-disk history for every yank. Instead `copy_image` shells out to `copyq copy text/uri-list file:///tmp/rlocal/wacli/<uuid>.jpg text/plain <caption or path>`.
+`y` on an image message with text opens a rofi dmenu offering **Copy image** or **Copy text**. If the text is empty or whitespace, it copies the image directly and shows a “Copied image” notification. Copy image downloads the media if needed, converts it to PNG, and passes the image bytes to `xclip -selection clipboard -t image/png -i`, so image paste targets (including `wacli` image sending) can read it. Copy text copies the message caption. Cancelling leaves the clipboard unchanged. Other messages, including videos, copy text directly.
 
-`copyq` rather than `xclip` because only it can advertise several targets in one call, and because it marks its own copies with `application/x-copyq-owner` and keeps them out of the history — so the yank stores nothing. Video is deliberately excluded: `mpv` already plays it and no paste target wants a video file URI.
 - voice notes — `$TMPDIR/wacli-voice`, not configurable: they are scratch files, deleted after 5 days. `TRANSCRIPTION_SCRIPT` transcribes them — only in one-to-one chats, never in groups — and the text is written back onto the message row, which then goes out as `message_updated`.
 
 ## The event log

@@ -1,9 +1,12 @@
+import asyncio
 import base64
 import socket
 import subprocess
+from io import BytesIO
 
 import pyperclip
 import pytest
+from PIL import Image
 
 from tui.app import EXIT_DISCONNECTED, VIM_VIEW_PATH, WaCLIApp
 from tui.models import Call, Message
@@ -345,10 +348,14 @@ async def test_view_image_message_opens_inline_viewer(stub_server):
         await wait_until(lambda: not app.query(ImageViewer))
 
 
-def stub_copyq(monkeypatch) -> list[list[str]]:
+def stub_xclip(monkeypatch) -> list[list[str]]:
     commands = []
 
     def fake_run(command, **kwargs):
+        assert kwargs["input"].startswith(b"\x89PNG\r\n\x1a\n")
+        with Image.open(BytesIO(kwargs["input"])) as image:
+            image.load()
+            assert image.format == "PNG"
         commands.append(command)
         return subprocess.CompletedProcess(args=command, returncode=0, stdout=b"", stderr=b"")
 
@@ -363,11 +370,37 @@ def image_entry(stub_server, filename: str, text: str) -> None:
     stub_server.media[filename] = png_bytes()
 
 
-async def test_yank_image_puts_a_file_pointer_on_the_clipboard(stub_server, monkeypatch):
-    image_entry(stub_server, "yank-caption.png", "a caption")
-    local = RUNTIME_DIR / "yank-caption.png"
+def stub_copy_menu(monkeypatch, selection="Copy image", returncode=0):
+    calls = []
+
+    class Process:
+        async def communicate(self, menu):
+            calls.append(menu)
+            return selection.encode(), b""
+
+    Process.returncode = returncode
+
+    async def fake_exec(*args, **kwargs):
+        assert args == ("rofi", "-dmenu", "-i", "-p", "Copy")
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return calls
+
+
+@pytest.mark.parametrize("extension", ["png", "jpg"])
+async def test_yank_image_puts_png_data_on_the_clipboard(stub_server, monkeypatch, extension):
+    menu_calls = stub_copy_menu(monkeypatch)
+    filename = f"yank-caption.{extension}"
+    image_entry(stub_server, filename, "a caption")
+    if extension == "jpg":
+        jpeg = BytesIO()
+        with Image.open(BytesIO(png_bytes())) as image:
+            image.convert("RGB").save(jpeg, format="JPEG")
+        stub_server.media[filename] = jpeg.getvalue()
+    local = RUNTIME_DIR / filename
     local.unlink(missing_ok=True)
-    commands = stub_copyq(monkeypatch)
+    commands = stub_xclip(monkeypatch)
     app = WaCLIApp()
     async with app.run_test() as pilot:
         await wait_until(lambda: len(app.entries) == 3)
@@ -376,35 +409,38 @@ async def test_yank_image_puts_a_file_pointer_on_the_clipboard(stub_server, monk
         await wait_until(lambda: bool(commands))
 
     assert commands[0] == [
-        "copyq",
-        "copy",
-        "text/uri-list",
-        local.as_uri(),
-        "text/plain",
-        "a caption",
+        "xclip", "-selection", "clipboard", "-t", "image/png", "-i",
     ]
-    assert local.read_bytes() == png_bytes()
+    assert local.read_bytes() == stub_server.media[filename]
+    assert menu_calls == [b"Copy image\nCopy text"]
 
 
-async def test_yank_uncaptioned_image_falls_back_to_the_path_as_text(stub_server, monkeypatch):
-    image_entry(stub_server, "yank-bare.png", "")
+@pytest.mark.parametrize("text", ["", "  \n "])
+async def test_yank_uncaptioned_image_copies_png_data(stub_server, monkeypatch, text):
+    menu_calls = stub_copy_menu(monkeypatch)
+    image_entry(stub_server, "yank-bare.png", text)
     local = RUNTIME_DIR / "yank-bare.png"
     local.unlink(missing_ok=True)
-    commands = stub_copyq(monkeypatch)
+    commands = stub_xclip(monkeypatch)
     app = WaCLIApp()
+    notifications = []
+    monkeypatch.setattr(app, "notify", lambda message, **kwargs: notifications.append(message))
     async with app.run_test() as pilot:
         await wait_until(lambda: len(app.entries) == 3)
 
         await pilot.press("y")
         await wait_until(lambda: bool(commands))
 
-    assert commands[0][-2:] == ["text/plain", str(local)]
+    assert commands[0] == ["xclip", "-selection", "clipboard", "-t", "image/png", "-i"]
+    assert menu_calls == []
+    assert "Copied image" in notifications
 
 
 async def test_yank_image_reuses_the_cached_download(stub_server, monkeypatch):
+    stub_copy_menu(monkeypatch)
     image_entry(stub_server, "yank-cached.png", "")
     (RUNTIME_DIR / "yank-cached.png").write_bytes(png_bytes())
-    commands = stub_copyq(monkeypatch)
+    commands = stub_xclip(monkeypatch)
     app = WaCLIApp()
     async with app.run_test() as pilot:
         await wait_until(lambda: len(app.entries) == 3)
@@ -415,11 +451,33 @@ async def test_yank_image_reuses_the_cached_download(stub_server, monkeypatch):
     assert all(cmd["action"] != "get_media" for cmd in stub_server.commands)
 
 
+@pytest.mark.parametrize("selection,returncode,expected", [
+    ("Copy text", 0, ["a caption"]),
+    ("", 1, []),
+])
+async def test_yank_image_text_or_cancel(stub_server, monkeypatch, selection, returncode, expected):
+    image_entry(stub_server, "yank-choice.png", "a caption")
+    menu_calls = stub_copy_menu(monkeypatch, selection, returncode)
+    commands = stub_xclip(monkeypatch)
+    copied = []
+    monkeypatch.setattr(pyperclip, "copy", copied.append)
+    app = WaCLIApp()
+    async with app.run_test() as pilot:
+        await wait_until(lambda: len(app.entries) == 3)
+        await pilot.press("y")
+        await wait_until(lambda: bool(menu_calls))
+        await pilot.pause()
+
+    assert copied == expected
+    assert commands == []
+    assert all(cmd["action"] != "get_media" for cmd in stub_server.commands)
+
+
 async def test_yank_video_message_still_copies_text(stub_server, monkeypatch):
     loaded_stub(stub_server)
     stub_server.entries["entries"][2]["message"]["media_file"] = "clip.mp4"
     stub_server.entries["entries"][2]["message"]["text"] = "watch this"
-    commands = stub_copyq(monkeypatch)
+    commands = stub_xclip(monkeypatch)
     copied = []
     monkeypatch.setattr(pyperclip, "copy", copied.append)
     app = WaCLIApp()

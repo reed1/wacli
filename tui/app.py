@@ -5,12 +5,14 @@ import os
 import re
 import subprocess
 import uuid
+from io import BytesIO
 
 from collections import namedtuple
 from functools import partial
 from pathlib import Path
 
 import pyperclip
+from PIL import Image
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Provider
@@ -506,37 +508,60 @@ class WaCLIApp(App):
         if not entry or isinstance(entry, Call):
             return
         if is_image_message(entry):
-            self.run_worker(self.copy_image(entry))
+            if entry.display_text.strip():
+                self.run_worker(self.pick_and_copy_message(entry))
+            else:
+                self.run_worker(self.copy_image(entry))
             return
         pyperclip.copy(strip_mentions(entry.display_text))
         self.notify("Copied to clipboard")
+
+    async def pick_and_copy_message(self, entry: Message) -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "rofi", "-dmenu", "-i", "-p", "Copy",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            self.notify("rofi not found", severity="error")
+            return
+        stdout, _ = await proc.communicate(b"Copy image\nCopy text")
+        if proc.returncode != 0:
+            return
+        selection = stdout.decode().strip().lower()
+        if selection == "copy image":
+            await self.copy_image(entry)
+        elif selection == "copy text":
+            pyperclip.copy(strip_mentions(entry.display_text))
+            self.notify("Copied to clipboard")
 
     async def copy_image(self, entry: Message) -> None:
         local_path = await self.fetch_media(entry.media_file)
         if local_path is None:
             return
-        # The clipboard carries a file:// pointer, not the pixels: a photo runs to megabytes
-        # and every paste target worth having reads text/uri-list. copyq is the only local
-        # tool that can advertise several targets at once, so text/plain rides along and a
-        # captioned image still pastes its caption into a text field.
-        caption = strip_mentions(entry.display_text).strip()
-        command = [
-            "copyq",
-            "copy",
-            "text/uri-list",
-            local_path.as_uri(),
-            "text/plain",
-            caption or str(local_path),
-        ]
         try:
-            subprocess.run(command, capture_output=True, check=True, timeout=CLIPBOARD_TIMEOUT)
+            with Image.open(local_path) as image:
+                png = BytesIO()
+                image.convert("RGBA").save(png, format="PNG")
+            subprocess.run(
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-i"],
+                input=png.getvalue(),
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=CLIPBOARD_TIMEOUT,
+            )
         except FileNotFoundError:
-            self.notify("copyq not found", severity="error")
+            self.notify("xclip not found", severity="error")
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             self.notify("Could not set clipboard", severity="error")
             return
-        self.notify("Copied image and caption" if caption else "Copied image")
+        except OSError:
+            self.notify("Could not read image", severity="error")
+            return
+        self.notify("Copied image")
 
     def action_open_in_vim(self) -> None:
         entry = self.get_selected_entry()
