@@ -90,7 +90,7 @@ Filtering happens once, server-side, before the row is inserted and broadcast (`
 | Events consumed | all of them | `message` (skipping `is_from_me`) and `connection_state` |
 | Sends commands | yes, all six | never — read-only |
 | On disconnect | exits `75` | exits `1` |
-| Restarted by | `wacli tui`, after a keypress | systemd, after 10s |
+| Restarted by | `wacli tui`, after a keypress or 10 min | systemd, after 10s |
 
 Both import `SERVER_ADDR` and `enable_keepalive` from `shared/connection.py`. `wacli send` takes only `SERVER_ADDR`: it opens a connection, sends one command, waits for the ack under a timeout and exits, so it is never idle long enough for keepalive to have anything to say. That module exists because the two clients must agree on where the server is and how aggressively to probe a quiet connection; when they disagreed, one of them silently went stale (below). The notifier and `tui/main.py` are each started directly, so each puts the repo root on `sys.path` to reach it.
 
@@ -103,7 +103,7 @@ A TCP connection whose peer disappears without sending a FIN — server restart,
 Recovery is per-client, and deliberately different:
 
 - **notifier** — exits 1, systemd restarts it 10s later, and it reconnects. Self-healing, no interaction.
-- **TUI** — exits `EXIT_DISCONNECTED` (75). `wacli tui` runs the TUI as a child process and treats only that code as "offer a restart", prints `Press any key to reconnect...`, and re-runs. Any other exit code falls through to `pause-if-error`, which holds the window open so the failure can be read. Restarting re-runs `get_entries`, so messages missed while the socket was dead come back.
+- **TUI** — exits `EXIT_DISCONNECTED` (75). `wacli tui` runs the TUI as a child process and treats only that code as "restart": it waits for a keypress or 10 minutes, whichever comes first, and re-runs. A server that is still unreachable makes the new run exit `75` too, so an unattended window retries every 10 minutes until it gets back in. Any other exit code falls through to `pause-if-error`, which holds the window open so the failure can be read. Restarting re-runs `get_entries`, so messages missed while the socket was dead come back.
 
 The TUI does not reconnect in place. Its whole view is built from one `get_entries` snapshot plus the live stream, so a reconnect would have to reconcile the two; a restart gets the same result for free.
 

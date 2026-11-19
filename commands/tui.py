@@ -1,10 +1,11 @@
-"""Run the TUI, offering a restart whenever it quits because the socket died.
+"""Run the TUI, restarting it whenever it quits because the socket died.
 
 The TUI does not reconnect in place: its view is one `get_entries` snapshot plus
 the live stream, so a fresh process is the cheapest way to resync. Each run is a
 separate process for that reason — nothing from the dead session survives.
 """
 
+import select
 import subprocess
 import sys
 import termios
@@ -14,6 +15,7 @@ from pathlib import Path
 from tui.utils import EXIT_DISCONNECTED
 
 TUI_MAIN = Path(__file__).parent.parent / "tui" / "main.py"
+AUTO_RECONNECT_SECONDS = 10 * 60
 
 
 def add_parser(subparsers) -> None:
@@ -22,13 +24,19 @@ def add_parser(subparsers) -> None:
     parser.set_defaults(run=run)
 
 
-def wait_for_key() -> None:
-    print("Press any key to reconnect...", end="", flush=True)
+def wait_for_key_or_timeout() -> None:
+    print(
+        f"Press any key to reconnect, or wait {AUTO_RECONNECT_SECONDS // 60} minutes...",
+        end="",
+        flush=True,
+    )
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
-        sys.stdin.read(1)
+        ready, _, _ = select.select([fd], [], [], AUTO_RECONNECT_SECONDS)
+        if ready:
+            sys.stdin.read(1)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
     print()
@@ -40,4 +48,4 @@ def run(args) -> int:
         code = subprocess.run(command, check=False).returncode
         if code != EXIT_DISCONNECTED:
             return code
-        wait_for_key()
+        wait_for_key_or_timeout()
